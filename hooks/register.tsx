@@ -443,23 +443,6 @@ type IconKind = keyof typeof ICON_BODY
 const iconSvg = (kind: IconKind, color: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON_BODY[kind](color)}</svg>`
 
-/** The whole period on one line: work sessions as blue bars (the live one green), gaps are the breaks. */
-const timelineSvg = (list: { start: number; end: number; live: boolean }[], spanEnd: number, startLabel: string, endLabel: string) => {
-  const W = 240
-  const t0 = list[0]?.start ?? 0
-  const span = Math.max(1, spanEnd - t0)
-  const bars = list
-    .map(r => {
-      const x = Math.min(W - 3, Math.max(0, ((r.start - t0) / span) * W))
-      const w = Math.max(3, Math.min(W - x, ((r.end - r.start) / span) * W))
-      return `<rect x="${x.toFixed(1)}" y="6" width="${w.toFixed(1)}" height="8" rx="4" fill="${r.live ? '#5BB85D' : '#4C9BEA'}"/>`
-    })
-    .join('')
-  const label = (x: number, anchor: string, text: string) =>
-    `<text x="${x}" y="28" font-size="10" fill="#9AA3AF" text-anchor="${anchor}" font-family="sans-serif">${xml(text)}</text>`
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="32" viewBox="0 0 ${W} 32"><rect y="6" width="${W}" height="8" rx="4" fill="#6b7280" fill-opacity="0.4"/>${bars}${label(0, 'start', startLabel)}${label(W, 'end', endLabel)}</svg>`
-}
-
 const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The newest done line is also logged as a shareable progress update for the user's project, so make it a real, specific accomplishment written as one clear sentence (for example "Added login rate limiting"); never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
 
 export const register: Register = on => {
@@ -728,8 +711,6 @@ export const register: Register = on => {
       if (prev && r.start - prev.end >= 60_000) timeline.push({ brk: fmt(r.start - prev.end) })
       timeline.push({ run: r })
     })
-    const lastEnd = runList[runList.length - 1]?.end ?? 0
-    const barSvg = runList.length ? timelineSvg(runList, isIdle ? lastEnd : now, dayTime(runList[0]!.start, now), isIdle ? `last ${clockTime(lastEnd)}` : 'now') : ''
     // A group is a keyed Box holding the top chip's runs plus the time card: the same pattern as the
     // glass and megaphone cards. (t is the plain text, so width maths still sees the group.)
     const grp = (key: string, segs: Seg[]): Seg => ({ t: segs.map(x => x.t).join(''), group: { key, segs } })
@@ -892,7 +873,7 @@ export const register: Register = on => {
               </Box>
             ))}
           </Box>
-          {barSvg ? <Svg source={barSvg} alt="Timeline of this period: work sessions and breaks" width={240} height={32} /> : <Text color="subtle">No sessions yet</Text>}
+          {timeline.length === 0 ? <Text color="subtle">No sessions yet</Text> : null}
           <Box flexDirection="column">
             {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
             {timeline.map(it =>
