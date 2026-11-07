@@ -703,12 +703,12 @@ export const register: Register = on => {
     const per = asMeter(await read($, period))
     const se = asMeter(await read($, sess))
     const periodStart = Math.min(num(per.startedAt) || startedAt, now)
-    const timeRows: [string, string, string, IconKind, string][] = [
-      ['Now', isIdle ? `idle ${fmt(now - lastActive)}` : `${fmt(now - startedAt)} focused`, isIdle ? 'warning' : 'suggestion', 'focus', isIdle ? '#E3A33B' : '#4C9BEA'],
-      ['Active', `${fmt(per.active)} in this period`, 'text', 'active', '#5BB85D'],
-      ['Breaks', fmt(per.idle), 'subtle', 'breaks', '#E3A33B'],
-      ['Started', dayTime(periodStart, now), 'text', 'started', '#9AA3AF'],
-      ['This chat', `${fmt(se.active)} active`, 'text', 'chat', '#9B8CF2'],
+    // Minimal: one line per stat, icon + words; no headings. Breaks only when there were any.
+    const timeRows: [string, string, IconKind, string, string][] = [
+      [isIdle ? `idle ${fmt(now - lastActive)}` : `${fmt(now - startedAt)} focused`, isIdle ? 'warning' : 'suggestion', 'focus', isIdle ? '#E3A33B' : '#4C9BEA', 'Now'],
+      [`${fmt(per.active)} active`, 'text', 'active', '#5BB85D', 'Active'],
+      ...(per.idle >= 60_000 ? [[`${fmt(per.idle)} breaks`, 'text', 'breaks', '#E3A33B', 'Breaks'] as [string, string, IconKind, string, string]] : []),
+      [`${fmt(se.active)} in this chat`, 'text', 'chat', '#9B8CF2', 'This chat'],
     ]
     // Work sessions of this period: each stretch between breaks, with its start and length.
     // No activity yet means no sessions (not a phantom 0s one); an old store without a list gets one from its start.
@@ -719,7 +719,7 @@ export const register: Register = on => {
       const len = Math.max(0, (live ? Math.max(r.end, now) : Math.min(r.end, now)) - start)
       return { start, end: start + len, len, live }
     })
-    const shownRuns = runList.slice(-6)
+    const shownRuns = runList.slice(-3)
     const earlierRuns = runList.length - shownRuns.length
     // Timeline items: each shown session, with the break between it and the one before it.
     const timeline: ({ brk: string } | { run: (typeof runList)[number] })[] = []
@@ -884,34 +884,30 @@ export const register: Register = on => {
     const timeCardNode = () =>
       Svg ? (
         <Box position="absolute" top={0} right={0} display="none" hover={{ display: 'flex' }} flexDirection="column" gap="sm">
-          <Box gap={1} alignItems="center">
-            <Svg source={iconSvg('clock', '#9AA3AF')} alt="Working time" width={14} height={14} />
-            <Text bold>Working time</Text>
+          <Box flexDirection="column">
+            {timeRows.map(([text, color, icon, ic, alt]) => (
+              <Box gap={1} alignItems="center">
+                <Svg source={iconSvg(icon, ic)} alt={alt} width={14} height={14} />
+                <Text color={color} bold>{text}</Text>
+              </Box>
+            ))}
           </Box>
-          {timeRows.map(([k, v, c, icon, ic]) => (
-            <Box gap={1} alignItems="center">
-              <Svg source={iconSvg(icon, ic)} alt={k} width={14} height={14} />
-              <Text>
-                <Text color="subtle">{`${k} · `}</Text>
-                <Text color={c} bold>{v}</Text>
-              </Text>
-            </Box>
-          ))}
-          <Text bold>Work sessions</Text>
           {barSvg ? <Svg source={barSvg} alt="Timeline of this period: work sessions and breaks" width={240} height={32} /> : <Text color="subtle">No sessions yet</Text>}
-          {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
-          {timeline.map(it =>
-            'brk' in it ? (
-              <Text color="subtle">{`╎ break ${it.brk}`}</Text>
-            ) : (
-              <Text>
-                <Text color={it.run.live ? 'success' : 'suggestion'} bold>{'● '}</Text>
-                <Text color="subtle">{`${dayTime(it.run.start, now)} · `}</Text>
-                <Text color={it.run.live ? 'success' : 'text'} bold>{fmtDur(it.run.len)}</Text>
-                {it.run.live ? <Text color="subtle">{' · now'}</Text> : null}
-              </Text>
-            ),
-          )}
+          <Box flexDirection="column">
+            {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
+            {timeline.map(it =>
+              'brk' in it ? (
+                <Text color="subtle">{`╎ break ${it.brk}`}</Text>
+              ) : (
+                <Text>
+                  <Text color={it.run.live ? 'success' : 'suggestion'} bold>{'● '}</Text>
+                  <Text color="subtle">{`${dayTime(it.run.start, now)} · `}</Text>
+                  <Text color={it.run.live ? 'success' : 'text'} bold>{fmtDur(it.run.len)}</Text>
+                  {it.run.live ? <Text color="subtle">{' · now'}</Text> : null}
+                </Text>
+              ),
+            )}
+          </Box>
         </Box>
       ) : null
 

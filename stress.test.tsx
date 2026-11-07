@@ -1137,9 +1137,11 @@ test('spacing: the card separates its rows (a gap step), so buttons of one row n
 
 const submit = ($: any) => $.prompt.submit({ text: 'x' })
 const finish = ($: any) => completeTurn($, undefined)
-// The time card lives inside the keyed top-chip Box ("timechip"): the glass/megaphone pattern.
-const timeCardOf = (root: any) =>
-  findAllType(root, 'Box').find((b: any) => b.props?.display === 'none' && textAll(b).includes('Working time'))
+// The time card is the hidden, absolute Box inside the keyed top-chip Box ("timechip").
+const timeCardOf = (root: any) => {
+  const chip = findAllType(root, 'Box').find((b: any) => b.props?.key === 'timechip')
+  return chip && (chip.children as any[]).find((c: any) => c.type === 'Box' && c.props?.display === 'none')
+}
 const cardText = async (ui: any) => textAll(timeCardOf(await ui.drawn()))
 const HOUR = 60 * MIN
 
@@ -1161,11 +1163,10 @@ test('period: the user scenario - 1h21m of work, a 2h04m break, back for 10m: si
   expect(rs[0].right).toMatch(/\b10m\b/) // the current stretch: 10 minutes
   expect(rs[1].right).toMatch(/since 9:35 AM/) // the period began at 9:35 AM, not at the restart
   const card = await cardText(ui)
-  expect(card).toMatch(/Now · 10m focused/)
-  expect(card).toMatch(/Active · 1h31m in this period/) // 81m of work + the 10m turn
-  expect(card).toMatch(/Breaks · 2h04m/)
-  expect(card).toMatch(/Started · 9:35 AM/)
-  expect(card).toMatch(/This chat · 10m active/)
+  expect(card).toMatch(/10m focused/)
+  expect(card).toMatch(/1h31m active/) // 81m of work + the 10m turn
+  expect(card).toMatch(/2h04m breaks/)
+  expect(card).toMatch(/10m in this chat/)
   await ui.unmount()
 })
 
@@ -1179,9 +1180,8 @@ test('period: a gap of 4 hours or more starts a fresh working period (active and
   await clock.advance(2 * MIN)
   await finish($)
   const card = await cardText(ui)
-  expect(card).toMatch(/Active · 2m in this period/)
-  expect(card).toMatch(/Breaks · 0m/)
-  expect(card).toMatch(/Started · 1:00 PM/) // the new period began at the prompt
+  expect(card).toMatch(/2m active/)
+  expect(card).not.toMatch(/breaks/) // none yet: the row is hidden
   expect((await rows(ui))[1].right).toMatch(/since 1:00 PM/)
   await ui.unmount()
 })
@@ -1193,8 +1193,8 @@ test('period: a long turn (a 60-minute run) counts as active work, not a break',
   await clock.advance(60 * MIN)
   await finish($)
   const card = await cardText(ui)
-  expect(card).toMatch(/Active · 1h00m in this period/)
-  expect(card).toMatch(/Breaks · 0m/)
+  expect(card).toMatch(/1h00m active/)
+  expect(card).not.toMatch(/breaks/)
   await ui.unmount()
 })
 
@@ -1202,17 +1202,16 @@ test('period: a new chat continues the period but its own active time starts at 
   await boot($, on, { store: { period: { startedAt: NOW - 3 * HOUR, lastActive: NOW - MIN, active: 150 * MIN, idle: 30 * MIN, inTurn: false } } })
   const ui = await $.ui.mount(desk())
   const card = await cardText(ui)
-  expect(card).toMatch(/Active · 2h30m in this period/)
-  expect(card).toMatch(/Breaks · 30m/)
-  expect(card).toMatch(/Started · 10:00 AM/)
-  expect(card).toMatch(/This chat · 0m active/)
+  expect(card).toMatch(/2h30m active/)
+  expect(card).toMatch(/30m breaks/)
+  expect(card).toMatch(/0m in this chat/)
   await ui.unmount()
 })
 
 test('period: this chat keeps its own active time across a restart (stored per session)', async ($, on) => {
   await boot($, on, { store: { 'sess:s1': { startedAt: NOW - HOUR, lastActive: NOW - MIN, active: 40 * MIN, idle: 0, inTurn: false } } })
   const ui = await $.ui.mount(desk())
-  expect(await cardText(ui)).toMatch(/This chat · 40m active/)
+  expect(await cardText(ui)).toMatch(/40m in this chat/)
   await ui.unmount()
 })
 
@@ -1260,7 +1259,7 @@ test('period: the clock set backwards never reduces active time or moves the sta
   await clock.advance(10 * MIN)
   await finish($)
   const before = await cardText(ui)
-  expect(before).toMatch(/Active · 10m/)
+  expect(before).toMatch(/10m active/)
   // a start dated in the future is clamped to now when shown
   const rs = await rows(ui)
   expect(rs[1].right).toMatch(/since 1:00 PM/)
@@ -1279,8 +1278,7 @@ test('time card: only on the top chip, inside its keyed Box (like the glass card
     const card = (w.children as any[]).find((c: any) => c.type === 'Box' && c.props?.display === 'none')
     expect(card).toBeTruthy()
     expect(card.props.position).toBe('absolute') // no extra height
-    expect(textAll(card)).toMatch(/Working time/)
-    expect(textAll(card)).toMatch(/Work sessions/)
+    expect(textAll(card)).toMatch(/focused|idle/) // the Now line
     const outside = { children: (w.children as any[]).filter((c: any) => c.props?.display !== 'none') }
     expect(findAllType(outside, 'Svg').length).toBe(0) // the chip itself never wraps the glass or megaphone (the card has its own icons)
     const pill = textAll(outside)
@@ -1289,7 +1287,7 @@ test('time card: only on the top chip, inside its keyed Box (like the glass card
     // the since line is plain text: no card, no hover box
     const since = (await rows(ui))[1].right
     expect(since).toMatch(/since/)
-    expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none' && textAll(b).includes('Working time')).length).toBe(1)
+    expect(findAllType(root, 'Box').filter((b: any) => b.props?.key === 'timechip').length).toBe(1)
     await ui.unmount()
   }
   const term = await $.ui.mount(BAND(100))
@@ -1324,7 +1322,7 @@ test('time card: idle state says so, and the since line keeps the original start
   const rs = await rows(ui)
   expect(rs[0].right).toMatch(/idle 35m/)
   expect(rs[1].right).toMatch(/last 5m/) // the stretch that ended
-  expect(await cardText(ui)).toMatch(/Now · idle 35m/)
+  expect(await cardText(ui)).toMatch(/idle 35m/)
   await ui.unmount()
 })
 
@@ -1347,7 +1345,6 @@ test('sessions: the user scenario lists the 1h 21m session and the live 10m sess
   const ui = await $.ui.mount(desk())
   await run($, clock, 10 * MIN)
   const card = await cardText(ui)
-  expect(card).toMatch(/Work sessions/)
   expect(card).toMatch(/9:35 AM · 1h 21m/)
   expect(card).toMatch(/1:00 PM · 10m 0s · now/)
   expect(card.indexOf('9:35 AM · 1h 21m')).toBeLessThan(card.indexOf('1:00 PM · 10m 0s'))
@@ -1387,19 +1384,20 @@ test('sessions: three sessions with breaks between are listed in order, each wit
   expect(c).toBeGreaterThan(b)
   expect(card).toMatch(/2:09 PM · 2m 0s · now/) // only the latest is live
   expect(card).not.toMatch(/1:34 PM · 4m 12s · now/)
-  expect(card).toMatch(/Breaks · 1h02m/) // 31m + 31m idle
+  expect(card).toMatch(/1h02m breaks/) // 31m + 31m idle
   await ui.unmount()
 })
 
-test('sessions: only the six latest are listed, with "+N earlier" for the rest', async ($, on) => {
+test('sessions: only the three latest are listed, with "+N earlier" for the rest', async ($, on) => {
   // Seeded (not replayed): fast-forwarding hours of 30-second ticks made this test slow and flaky.
   const runs = Array.from({ length: 9 }, (_, i) => ({ start: NOW - (10 - i) * 20 * MIN, end: NOW - (10 - i) * 20 * MIN + MIN }))
   await boot($, on, { store: { period: { startedAt: runs[0]!.start, lastActive: NOW - 5 * MIN, active: 9 * MIN, idle: 0, inTurn: false, runs } } })
   const ui = await $.ui.mount(desk())
   const card = await cardText(ui)
-  expect(card).toMatch(/\+3 earlier/)
-  expect((card.match(/ · 1m 0s/g) ?? []).length).toBe(5) // five finished sessions...
+  expect(card).toMatch(/\+6 earlier/)
+  expect((card.match(/ · 1m 0s/g) ?? []).length).toBe(2) // two finished sessions...
   expect(card).toMatch(/ · 40m 0s · now/) // ...and the live one, counted through now
+  expect((card.match(/● /g) ?? []).length).toBe(3)
   await ui.unmount()
 })
 
@@ -1456,8 +1454,8 @@ test('sessions: the list is on the time card only; the band rows themselves stay
   const ui = await $.ui.mount(desk())
   await run($, clock, 5 * MIN)
   const rs = await rows(ui)
-  expect(rs[0].right + rs[1].right + rs[2].right).not.toMatch(/Work sessions/)
-  expect(await cardText(ui)).toMatch(/Work sessions/)
+  expect(rs[0].right + rs[1].right + rs[2].right).not.toMatch(/5m 0s/) // the sessions list is in the card only
+  expect(await cardText(ui)).toMatch(/5m 0s · now/)
   await ui.unmount()
 })
 
@@ -1472,7 +1470,7 @@ test('reload: in-memory state from an older version (a meter without runs) never
   const ui = await $.ui.mount(desk())
   const rs = await rows(ui)
   expect(rs.length).toBe(3)
-  expect(await cardText(ui)).toMatch(/Active · 1h00m in this period/)
+  expect(await cardText(ui)).toMatch(/1h00m active/)
   await ui.unmount()
 })
 
@@ -1486,20 +1484,31 @@ const seeded = (runs: { start: number; end: number }[], extra: any = {}) => ({
   period: { startedAt: runs[0]!.start, lastActive: runs.at(-1)!.end, active: runs.reduce((a, r) => a + (r.end - r.start), 0), idle: 0, inTurn: false, runs, ...extra },
 })
 
-test('time card icons: a header clock and one icon per row, distinct, small, not interactive', async ($, on) => {
-  await boot($, on)
-  await submit($)
+test('time card icons: one distinct small icon per stat line (Breaks only when there were breaks)', async ($, on) => {
+  const a = NOW - 90 * MIN
+  await boot($, on, { store: seeded([{ start: a, end: a + 20 * MIN }, { start: a + 60 * MIN, end: a + 85 * MIN }], { idle: 40 * MIN }) })
   const ui = await $.ui.mount(desk())
   const card = timeCardOf(await ui.drawn())
   const icons = svgsOf(card).filter((v: any) => v.props.width === 14)
-  expect(icons.map((v: any) => v.props.alt)).toEqual(['Working time', 'Now', 'Active', 'Breaks', 'Started', 'This chat'])
-  expect(new Set(icons.map((v: any) => v.props.source)).size).toBe(6) // six different drawings
+  expect(icons.map((v: any) => v.props.alt)).toEqual(['Now', 'Active', 'Breaks', 'This chat'])
+  expect(new Set(icons.map((v: any) => v.props.source)).size).toBe(4)
   for (const v of icons) {
     expect(v.props.isInteractive).toBeFalsy()
     expect(v.props.height).toBe(14)
     expect(v.props.source).toMatch(/^<svg [^>]*viewBox="0 0 16 16"/)
     expect(v.props.source.length).toBeLessThan(900)
   }
+  await ui.unmount()
+})
+
+test('time card is minimal: no headings, no Started row, no Breaks row until there is a break', async ($, on) => {
+  await boot($, on)
+  await submit($)
+  const ui = await $.ui.mount(desk())
+  const text = textAll(timeCardOf(await ui.drawn()))
+  expect(text).not.toMatch(/Working time|Work sessions|Started|breaks/)
+  const icons = svgsOf(timeCardOf(await ui.drawn())).filter((v: any) => v.props.width === 14)
+  expect(icons.map((v: any) => v.props.alt)).toEqual(['Now', 'Active', 'This chat'])
   await ui.unmount()
 })
 
@@ -1606,7 +1615,7 @@ test('timeline: no sessions yet shows a plain note instead of an empty bar', asy
   await ui.unmount()
 })
 
-test('timeline: 40 sessions still draw a bar well under the SVG size limit, six listed + "+N earlier"', async ($, on) => {
+test('timeline: 40 sessions still draw a bar well under the SVG size limit, three listed + "+N earlier"', async ($, on) => {
   const base = NOW - 40 * 20 * MIN
   const runs = Array.from({ length: 40 }, (_, i) => ({ start: base + i * 20 * MIN, end: base + i * 20 * MIN + 5 * MIN }))
   await boot($, on, { store: seeded(runs) })
@@ -1615,8 +1624,8 @@ test('timeline: 40 sessions still draw a bar well under the SVG size limit, six 
   const bar = svgsOf(card).find((v: any) => v.props.width === 240)
   expect((bar.props.source.match(/<rect x=/g) ?? []).length).toBe(40)
   expect(bar.props.source.length).toBeLessThan(20000)
-  expect(textAll(card)).toMatch(/\+34 earlier/)
-  expect((textAll(card).match(/● /g) ?? []).length).toBe(6)
+  expect(textAll(card)).toMatch(/\+37 earlier/)
+  expect((textAll(card).match(/● /g) ?? []).length).toBe(3)
   await ui.unmount()
 })
 
@@ -1644,7 +1653,7 @@ test('time card icons and timeline exist on desktop/editor only (the terminal ha
   await term.unmount()
   for (const surface of ['desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ ...BAND(100), surface })
-    expect(svgsOf(timeCardOf(await ui.drawn())).length).toBeGreaterThanOrEqual(7) // 6 icons + the bar
+    expect(svgsOf(timeCardOf(await ui.drawn())).length).toBeGreaterThanOrEqual(4) // 3 icons + the bar
     await ui.unmount()
   }
 })
