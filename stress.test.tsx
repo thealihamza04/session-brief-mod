@@ -1281,8 +1281,9 @@ test('time card: only on the top chip, inside its keyed Box (like the glass card
     expect(card.props.position).toBe('absolute') // no extra height
     expect(textAll(card)).toMatch(/Working time/)
     expect(textAll(card)).toMatch(/Work sessions/)
-    expect(findAllType(w, 'Svg').length).toBe(0) // never wraps the glass or megaphone
-    const pill = textAll({ children: (w.children as any[]).filter((c: any) => c.props?.display !== 'none') })
+    const outside = { children: (w.children as any[]).filter((c: any) => c.props?.display !== 'none') }
+    expect(findAllType(outside, 'Svg').length).toBe(0) // the chip itself never wraps the glass or megaphone (the card has its own icons)
+    const pill = textAll(outside)
     expect(pill).toMatch(/work/)
     expect(pill).not.toMatch(/since|app|\d{3,}k/)
     // the since line is plain text: no card, no hover box
@@ -1473,4 +1474,177 @@ test('reload: in-memory state from an older version (a meter without runs) never
   expect(rs.length).toBe(3)
   expect(await cardText(ui)).toMatch(/Active · 1h00m in this period/)
   await ui.unmount()
+})
+
+// ====================================================================
+// time card: icons + timeline
+// ====================================================================
+
+const svgsOf = (n: any) => findAllType(n, 'Svg')
+const seeded = (runs: { start: number; end: number }[], extra: any = {}) => ({
+  stretch: { startedAt: runs[0]!.start, lastActive: runs.at(-1)!.end }, // what the idle state is judged by
+  period: { startedAt: runs[0]!.start, lastActive: runs.at(-1)!.end, active: runs.reduce((a, r) => a + (r.end - r.start), 0), idle: 0, inTurn: false, runs, ...extra },
+})
+
+test('time card icons: a header clock and one icon per row, distinct, small, not interactive', async ($, on) => {
+  await boot($, on)
+  await submit($)
+  const ui = await $.ui.mount(desk())
+  const card = timeCardOf(await ui.drawn())
+  const icons = svgsOf(card).filter((v: any) => v.props.width === 14)
+  expect(icons.map((v: any) => v.props.alt)).toEqual(['Working time', 'Now', 'Active', 'Breaks', 'Started', 'This chat'])
+  expect(new Set(icons.map((v: any) => v.props.source)).size).toBe(6) // six different drawings
+  for (const v of icons) {
+    expect(v.props.isInteractive).toBeFalsy()
+    expect(v.props.height).toBe(14)
+    expect(v.props.source).toMatch(/^<svg [^>]*viewBox="0 0 16 16"/)
+    expect(v.props.source.length).toBeLessThan(900)
+  }
+  await ui.unmount()
+})
+
+test('time card icons: the Now icon turns amber when idle, blue when focused', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await run($, clock, 2 * MIN)
+  const nowIcon = async () => svgsOf(timeCardOf(await ui.drawn())).find((v: any) => v.props.alt === 'Now').props.source as string
+  expect(await nowIcon()).toContain('#4C9BEA')
+  await clock.advance(35 * MIN)
+  expect(await nowIcon()).toContain('#E3A33B')
+  await ui.unmount()
+})
+
+test('timeline bar: one bar per session, the live one green, the others blue, with start and "now" labels', async ($, on) => {
+  const a = NOW - 120 * MIN
+  await boot($, on, { store: seeded([{ start: a, end: a + 30 * MIN }, { start: a + 60 * MIN, end: a + 80 * MIN }, { start: a + 100 * MIN, end: a + 110 * MIN }]) })
+  const ui = await $.ui.mount(desk())
+  const bar = svgsOf(timeCardOf(await ui.drawn())).find((v: any) => v.props.width === 240)
+  expect(bar).toBeTruthy()
+  const src = bar.props.source as string
+  expect((src.match(/fill="#4C9BEA"/g) ?? []).length).toBe(2) // two finished sessions
+  expect((src.match(/fill="#5BB85D"/g) ?? []).length).toBe(1) // the live one
+  expect(src).toMatch(/>11:00 AM</) // starts at NOW-120m
+  expect(src).toMatch(/>now</)
+  expect(src).not.toMatch(/NaN|Infinity|undefined/)
+  expect(src.length).toBeLessThan(131072)
+  expect(bar.props.isInteractive).toBeFalsy()
+  expect(bar.props.alt).toMatch(/Timeline/)
+  await ui.unmount()
+})
+
+test('timeline bar: segments are proportional and stay inside the track', async ($, on) => {
+  const a = NOW - 100 * MIN
+  await boot($, on, { store: seeded([{ start: a, end: a + 50 * MIN }, { start: a + 90 * MIN, end: a + 99 * MIN }]) })
+  const ui = await $.ui.mount(desk())
+  const src = svgsOf(timeCardOf(await ui.drawn())).find((v: any) => v.props.width === 240).props.source as string
+  const rects = [...src.matchAll(/<rect x="([\d.]+)" y="6" width="([\d.]+)" height="8" rx="4" fill="(#4C9BEA|#5BB85D)"/g)].map(m => ({ x: Number(m[1]), w: Number(m[2]) }))
+  expect(rects.length).toBe(2)
+  expect(Math.abs(rects[0]!.x)).toBeLessThan(1)
+  expect(rects[0]!.w).toBeGreaterThan(110) // 50 of 100 minutes of 240px = 120px
+  expect(rects[0]!.w).toBeLessThan(130)
+  for (const r of rects) expect(r.x + r.w).toBeLessThanOrEqual(240.1) // never past the track
+  expect(rects[1]!.x).toBeGreaterThan(rects[0]!.x + rects[0]!.w) // the break is a visible gap
+  await ui.unmount()
+})
+
+test('timeline bar: when idle, the end label says "last <time>" and no bar is live', async ($, on) => {
+  const a = NOW - 3 * HOUR
+  await boot($, on, { store: seeded([{ start: a, end: a + 30 * MIN }]) })
+  const ui = await $.ui.mount(desk())
+  const src = svgsOf(timeCardOf(await ui.drawn())).find((v: any) => v.props.width === 240).props.source as string
+  expect(src).toMatch(/>last 10:30 AM</)
+  expect((src.match(/fill="#5BB85D"/g) ?? []).length).toBe(0)
+  await ui.unmount()
+})
+
+test('timeline list: a dot per session with the break between, live one marked, in order', async ($, on) => {
+  const a = NOW - 120 * MIN
+  await boot($, on, { store: seeded([{ start: a, end: a + 30 * MIN }, { start: a + 65 * MIN, end: a + 85 * MIN }, { start: a + 100 * MIN, end: a + 110 * MIN }]) })
+  const ui = await $.ui.mount(desk())
+  const card = timeCardOf(await ui.drawn())
+  const text = textAll(card)
+  const first = text.indexOf('11:00 AM · 30m 0s')
+  const brk1 = text.indexOf('╎ break 35m')
+  const second = text.indexOf('12:05 PM · 20m 0s')
+  const brk2 = text.indexOf('╎ break 15m')
+  const third = text.indexOf('12:40 PM')
+  expect(first).toBeGreaterThanOrEqual(0)
+  expect(brk1).toBeGreaterThan(first)
+  expect(second).toBeGreaterThan(brk1)
+  expect(brk2).toBeGreaterThan(second)
+  expect(third).toBeGreaterThan(brk2)
+  expect(text).toMatch(/12:40 PM · 20m 0s · now/) // live: counted through now
+  expect((text.match(/● /g) ?? []).length).toBe(3)
+  expect((text.match(/╎ break/g) ?? []).length).toBe(2)
+  await ui.unmount()
+})
+
+test('timeline list: the dot is green for the live session and blue for finished ones', async ($, on) => {
+  const a = NOW - 100 * MIN
+  await boot($, on, { store: seeded([{ start: a, end: a + 20 * MIN }, { start: a + 60 * MIN, end: a + 95 * MIN }]) })
+  const ui = await $.ui.mount(desk())
+  const card = timeCardOf(await ui.drawn())
+  const dots = findAllType(card, 'Text').filter((n: any) => textAll(n) === '● ')
+  expect(dots.map((d: any) => d.props.color)).toEqual(['suggestion', 'success'])
+  await ui.unmount()
+})
+
+test('timeline list: sessions less than a minute apart show no break line', async ($, on) => {
+  const a = NOW - 60 * MIN
+  await boot($, on, { store: seeded([{ start: a, end: a + 10 * MIN }, { start: a + 10 * MIN + 30_000, end: a + 20 * MIN }]) })
+  const ui = await $.ui.mount(desk())
+  expect(textAll(timeCardOf(await ui.drawn()))).not.toMatch(/╎ break/)
+  await ui.unmount()
+})
+
+test('timeline: no sessions yet shows a plain note instead of an empty bar', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  const card = timeCardOf(await ui.drawn())
+  expect(textAll(card)).toMatch(/No sessions yet/)
+  expect(svgsOf(card).filter((v: any) => v.props.width === 240).length).toBe(0)
+  await ui.unmount()
+})
+
+test('timeline: 40 sessions still draw a bar well under the SVG size limit, six listed + "+N earlier"', async ($, on) => {
+  const base = NOW - 40 * 20 * MIN
+  const runs = Array.from({ length: 40 }, (_, i) => ({ start: base + i * 20 * MIN, end: base + i * 20 * MIN + 5 * MIN }))
+  await boot($, on, { store: seeded(runs) })
+  const ui = await $.ui.mount(desk())
+  const card = timeCardOf(await ui.drawn())
+  const bar = svgsOf(card).find((v: any) => v.props.width === 240)
+  expect((bar.props.source.match(/<rect x=/g) ?? []).length).toBe(40)
+  expect(bar.props.source.length).toBeLessThan(20000)
+  expect(textAll(card)).toMatch(/\+34 earlier/)
+  expect((textAll(card).match(/● /g) ?? []).length).toBe(6)
+  await ui.unmount()
+})
+
+for (const [name, runs] of [
+  ['a start in the future', [{ start: NOW + HOUR, end: NOW + 2 * HOUR }]],
+  ['zero-length runs', [{ start: NOW - HOUR, end: NOW - HOUR }]],
+  ['all at once', [{ start: NOW - HOUR, end: NOW - 30 * MIN }, { start: NOW - HOUR, end: NOW - 20 * MIN }]],
+  ['overlapping runs', [{ start: NOW - 3 * HOUR, end: NOW - HOUR }, { start: NOW - 2 * HOUR, end: NOW - 30 * MIN }]],
+] as const) {
+  test(`timeline: odd run data (${name}) never produces NaN, negatives or an oversized bar`, async ($, on) => {
+    await boot($, on, { store: seeded(runs as any) })
+    const ui = await $.ui.mount(desk())
+    const card = timeCardOf(await ui.drawn())
+    const all = textAll(card) + svgsOf(card).map((v: any) => v.props.source).join('')
+    expect(all).not.toMatch(/NaN|Infinity|undefined|\[object|="-\d|x="-/)
+    await ui.unmount()
+  })
+}
+
+test('time card icons and timeline exist on desktop/editor only (the terminal has no card)', async ($, on) => {
+  await boot($, on)
+  await submit($)
+  const term = await $.ui.mount(BAND(100))
+  expect(timeCardOf(await term.drawn())).toBeUndefined()
+  await term.unmount()
+  for (const surface of ['desktop', 'vscode'] as const) {
+    const ui = await $.ui.mount({ ...BAND(100), surface })
+    expect(svgsOf(timeCardOf(await ui.drawn())).length).toBeGreaterThanOrEqual(7) // 6 icons + the bar
+    await ui.unmount()
+  }
 })

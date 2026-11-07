@@ -1,6 +1,6 @@
 {
   "name": "session-brief",
-  "version": "0.8.4",
+  "version": "0.9.0",
   "description": "Three lines above the prompt: what the session is for and the two most recent things done, with a compact work timer on the right.",
   "author": { "name": "Ali Hamza" },
   "license": "MIT",

@@ -427,6 +427,39 @@ const tickMeters = async ($: any, kind: 'prompt' | 'done') => {
   })
 }
 
+/** XML-escape text placed inside an SVG. */
+const xml = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// Small stroke icons for the time card (16x16 viewBox, drawn at 14px).
+const ICON_BODY = {
+  clock: (c: string) => `<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>`,
+  focus: (c: string) => `<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.6" fill="${c}"/>`,
+  active: (c: string) => `<polyline points="1.5,9 4.5,9 6.5,3.5 9.5,13 11.5,8 14.5,8"/>`,
+  breaks: (c: string) => `<path d="M3 6h8v4a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z"/><path d="M11 7h1.2a1.6 1.6 0 0 1 0 3.2H11"/><path d="M5.5 2.5v1.5M8 2.5v1.5"/>`,
+  started: (c: string) => `<path d="M3.5 14.5V2"/><path d="M3.5 3h8.5l-2 3 2 3H3.5"/>`,
+  chat: (c: string) => `<path d="M2 3h12v8H7.5L4 14v-3H2z"/>`,
+} as const
+type IconKind = keyof typeof ICON_BODY
+const iconSvg = (kind: IconKind, color: string) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON_BODY[kind](color)}</svg>`
+
+/** The whole period on one line: work sessions as blue bars (the live one green), gaps are the breaks. */
+const timelineSvg = (list: { start: number; end: number; live: boolean }[], spanEnd: number, startLabel: string, endLabel: string) => {
+  const W = 240
+  const t0 = list[0]?.start ?? 0
+  const span = Math.max(1, spanEnd - t0)
+  const bars = list
+    .map(r => {
+      const x = Math.min(W - 3, Math.max(0, ((r.start - t0) / span) * W))
+      const w = Math.max(3, Math.min(W - x, ((r.end - r.start) / span) * W))
+      return `<rect x="${x.toFixed(1)}" y="6" width="${w.toFixed(1)}" height="8" rx="4" fill="${r.live ? '#5BB85D' : '#4C9BEA'}"/>`
+    })
+    .join('')
+  const label = (x: number, anchor: string, text: string) =>
+    `<text x="${x}" y="28" font-size="10" fill="#9AA3AF" text-anchor="${anchor}" font-family="sans-serif">${xml(text)}</text>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="32" viewBox="0 0 ${W} 32"><rect y="6" width="${W}" height="8" rx="4" fill="#6b7280" fill-opacity="0.4"/>${bars}${label(0, 'start', startLabel)}${label(W, 'end', endLabel)}</svg>`
+}
+
 const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The newest done line is also logged as a shareable progress update for the user's project, so make it a real, specific accomplishment written as one clear sentence (for example "Added login rate limiting"); never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
 
 export const register: Register = on => {
@@ -670,22 +703,33 @@ export const register: Register = on => {
     const per = asMeter(await read($, period))
     const se = asMeter(await read($, sess))
     const periodStart = Math.min(num(per.startedAt) || startedAt, now)
-    const timeRows: [string, string, string][] = [
-      ['Now', isIdle ? `idle ${fmt(now - lastActive)}` : `${fmt(now - startedAt)} focused`, isIdle ? 'warning' : 'suggestion'],
-      ['Active', `${fmt(per.active)} in this period`, 'text'],
-      ['Breaks', fmt(per.idle), 'subtle'],
-      ['Started', dayTime(periodStart, now), 'text'],
-      ['This chat', `${fmt(se.active)} active`, 'text'],
+    const timeRows: [string, string, string, IconKind, string][] = [
+      ['Now', isIdle ? `idle ${fmt(now - lastActive)}` : `${fmt(now - startedAt)} focused`, isIdle ? 'warning' : 'suggestion', 'focus', isIdle ? '#E3A33B' : '#4C9BEA'],
+      ['Active', `${fmt(per.active)} in this period`, 'text', 'active', '#5BB85D'],
+      ['Breaks', fmt(per.idle), 'subtle', 'breaks', '#E3A33B'],
+      ['Started', dayTime(periodStart, now), 'text', 'started', '#9AA3AF'],
+      ['This chat', `${fmt(se.active)} active`, 'text', 'chat', '#9B8CF2'],
     ]
     // Work sessions of this period: each stretch between breaks, with its start and length.
-    const known = per.runs.length ? per.runs : periodStart ? [{ start: periodStart, end: Math.max(periodStart, lastActive) }] : []
+    // No activity yet means no sessions (not a phantom 0s one); an old store without a list gets one from its start.
+    const known = per.runs.length ? per.runs : per.startedAt ? [{ start: per.startedAt, end: Math.max(per.startedAt, per.lastActive) }] : []
     const runList = known.map((r, i) => {
       const live = i === known.length - 1 && !isIdle
       const start = Math.min(r.start, now)
-      return { start, len: Math.max(0, (live ? Math.max(r.end, now) : Math.min(r.end, now)) - start), live }
+      const len = Math.max(0, (live ? Math.max(r.end, now) : Math.min(r.end, now)) - start)
+      return { start, end: start + len, len, live }
     })
     const shownRuns = runList.slice(-6)
     const earlierRuns = runList.length - shownRuns.length
+    // Timeline items: each shown session, with the break between it and the one before it.
+    const timeline: ({ brk: string } | { run: (typeof runList)[number] })[] = []
+    shownRuns.forEach((r, i) => {
+      const prev = shownRuns[i - 1]
+      if (prev && r.start - prev.end >= 60_000) timeline.push({ brk: fmt(r.start - prev.end) })
+      timeline.push({ run: r })
+    })
+    const lastEnd = runList[runList.length - 1]?.end ?? 0
+    const barSvg = runList.length ? timelineSvg(runList, isIdle ? lastEnd : now, dayTime(runList[0]!.start, now), isIdle ? `last ${clockTime(lastEnd)}` : 'now') : ''
     // A group is a keyed Box holding the top chip's runs plus the time card: the same pattern as the
     // glass and megaphone cards. (t is the plain text, so width maths still sees the group.)
     const grp = (key: string, segs: Seg[]): Seg => ({ t: segs.map(x => x.t).join(''), group: { key, segs } })
@@ -837,26 +881,39 @@ export const register: Register = on => {
         </Box>
       ) : null
 
-    const timeCardNode = () => (
-      <Box position="absolute" top={0} right={0} display="none" hover={{ display: 'flex' }} flexDirection="column" gap="sm">
-        <Text bold>Working time</Text>
-        {timeRows.map(([k, v, c]) => (
-          <Text>
-            <Text color="subtle">{`${k} · `}</Text>
-            <Text color={c} bold>{v}</Text>
-          </Text>
-        ))}
-        <Text bold>Work sessions</Text>
-        {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
-        {shownRuns.map(r => (
-          <Text>
-            <Text color="subtle">{`${dayTime(r.start, now)} · `}</Text>
-            <Text color={r.live ? 'suggestion' : 'text'} bold>{fmtDur(r.len)}</Text>
-            {r.live ? <Text color="subtle">{' · now'}</Text> : null}
-          </Text>
-        ))}
-      </Box>
-    )
+    const timeCardNode = () =>
+      Svg ? (
+        <Box position="absolute" top={0} right={0} display="none" hover={{ display: 'flex' }} flexDirection="column" gap="sm">
+          <Box gap={1} alignItems="center">
+            <Svg source={iconSvg('clock', '#9AA3AF')} alt="Working time" width={14} height={14} />
+            <Text bold>Working time</Text>
+          </Box>
+          {timeRows.map(([k, v, c, icon, ic]) => (
+            <Box gap={1} alignItems="center">
+              <Svg source={iconSvg(icon, ic)} alt={k} width={14} height={14} />
+              <Text>
+                <Text color="subtle">{`${k} · `}</Text>
+                <Text color={c} bold>{v}</Text>
+              </Text>
+            </Box>
+          ))}
+          <Text bold>Work sessions</Text>
+          {barSvg ? <Svg source={barSvg} alt="Timeline of this period: work sessions and breaks" width={240} height={32} /> : <Text color="subtle">No sessions yet</Text>}
+          {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
+          {timeline.map(it =>
+            'brk' in it ? (
+              <Text color="subtle">{`╎ break ${it.brk}`}</Text>
+            ) : (
+              <Text>
+                <Text color={it.run.live ? 'success' : 'suggestion'} bold>{'● '}</Text>
+                <Text color="subtle">{`${dayTime(it.run.start, now)} · `}</Text>
+                <Text color={it.run.live ? 'success' : 'text'} bold>{fmtDur(it.run.len)}</Text>
+                {it.run.live ? <Text color="subtle">{' · now'}</Text> : null}
+              </Text>
+            ),
+          )}
+        </Box>
+      ) : null
 
     const runs = (line: Seg[]): any[] =>
       line.map(x =>
