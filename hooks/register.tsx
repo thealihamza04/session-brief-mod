@@ -673,7 +673,7 @@ export const register: Register = on => {
       Svg ? (
         <Box key="share">
           <Svg source={imgSvg(SHARE_PNG[`mega${lvl}` as 'mega0'], 22)} alt={`Share progress: ${unshared} updates not shared`} width={22} height={22} />
-          <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }} flexDirection="column">
+          <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }} flexDirection="column" gap="sm">
             <Box gap={1}>
               <Text bold>Share your progress</Text>
               <Text color={unshared === 0 ? 'success' : badgeColor[lvl]}>{unshared === 0 ? 'all shared' : `${unshared} not shared`}</Text>
@@ -681,16 +681,15 @@ export const register: Register = on => {
             {PLATS.map(p => {
               const n = unsharedFor(sh, p).length
               const d = sh.drafts[p]
-              // One compact line: logo, name, status, then only the buttons this state needs.
+              // One compact line: logo, "Name · status", then only the buttons this state needs.
               return (
                 <Box gap={1} alignItems="center">
                   <Svg source={imgSvg(SHARE_PNG[p], 18)} alt={PLAT_LABEL[p]} width={18} height={18} />
-                  <Box width={9}>
+                  <Text>
                     <Text bold>{PLAT_LABEL[p]}</Text>
-                  </Box>
-                  <Box width={10}>
+                    <Text color="subtle">{' · '}</Text>
                     <Text color={n === 0 ? 'success' : badgeColor[badgeLevel(n)]}>{n === 0 ? 'up to date' : `${n} new`}</Text>
-                  </Box>
+                  </Text>
                   <Box flexGrow={1} />
                   {n > 0 && !d ? (
                     <Button key={`draft-${p}`} label={sh.drafting === p ? 'Drafting…' : 'Draft'} onPress={() => draftFor(p)} />
@@ -706,10 +705,9 @@ export const register: Register = on => {
             {gh.kind !== 'none' ? (
               <Box gap={1} alignItems="center">
                 <Svg source={imgSvg(SHARE_PNG.github, 18)} alt="GitHub" width={18} height={18} />
-                <Box width={9}>
-                  <Text bold>GitHub</Text>
-                </Box>
                 <Text wrap="truncate-end">
+                  <Text bold>GitHub</Text>
+                  <Text color="subtle">{' · '}</Text>
                   <Text color={gh.kind === 'clean' ? 'success' : 'warning'}>{ghText}</Text>
                   {gh.branch ? <Text color="subtle">{` · ${gh.branch}`}</Text> : null}
                 </Text>

@@ -730,8 +730,8 @@ test('share: posting on one platform only keeps the badge until both are done; e
   await ui.press({ key: 'posted-linkedin' })
   expect(await unsharedOf(ui)).toBe(3) // X still has all 3
   const card = textAll(shareCard(await ui.drawn()))
-  expect(card).toMatch(/LinkedIn\s*up to date/)
-  expect(card).toMatch(/X\s*3 new/)
+  expect(card).toMatch(/LinkedIn · up to date/)
+  expect(card).toMatch(/X · 3 new/)
   await ui.unmount()
 })
 
@@ -883,12 +883,12 @@ test('share: a log longer than 100 is capped at 100', async ($, on) => {
 })
 
 for (const [name, out, expected] of [
-  ['clean', '## main...origin/main\n', /GitHub\s*pushed/],
-  ['ahead', '## main...origin/main [ahead 2]\n', /GitHub\s*2 commits not pushed/],
-  ['ahead 1', '## main...origin/main [ahead 1]\n', /GitHub\s*1 commit not pushed/],
-  ['dirty', '## main...origin/main\n M a.ts\n?? b.ts\n', /GitHub\s*2 files not committed/],
-  ['no upstream', '## main\n', /GitHub\s*no upstream, not pushed/],
-  ['new repo', '## No commits yet on main\n?? a\n', /GitHub\s*1 file not committed/],
+  ['clean', '## main...origin/main\n', /GitHub · pushed/],
+  ['ahead', '## main...origin/main [ahead 2]\n', /GitHub · 2 commits not pushed/],
+  ['ahead 1', '## main...origin/main [ahead 1]\n', /GitHub · 1 commit not pushed/],
+  ['dirty', '## main...origin/main\n M a.ts\n?? b.ts\n', /GitHub · 2 files not committed/],
+  ['no upstream', '## main\n', /GitHub · no upstream, not pushed/],
+  ['new repo', '## No commits yet on main\n?? a\n', /GitHub · 1 file not committed/],
 ] as const) {
   test(`git row: ${name}`, async ($, on) => {
     await boot($, on, { git: out })
@@ -1080,7 +1080,7 @@ test('layout: one compact line per platform; buttons depend on state (Draft -> �
   // GitHub is one line too, and the footer is a single short line
   const gh = rowOf('GitHub')
   expect(findAllType(gh, 'Button').length).toBe(0)
-  expect(textAll(gh)).toMatch(/GitHubpushed · main/)
+  expect(textAll(gh)).toMatch(/GitHub · pushed · main/)
   expect(textAll(shareCard(ui_root))).toMatch(/Nothing posts until you do\.$/)
   await ui.unmount()
 })
@@ -1114,5 +1114,19 @@ test('share: Posted works without drafting first (you wrote the post yourself)',
   await ui.press({ key: 'posted-linkedin' })
   await ui.press({ key: 'posted-x' })
   expect(await unsharedOf(ui)).toBe(0)
+  await ui.unmount()
+})
+
+test('spacing: the card separates its rows (a gap step), so buttons of one row never overlap the next', async ($, on) => {
+  await boot($, on, { model: 'post', git: '## main...origin/main\n' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-linkedin' })
+  const card = shareCard(await ui.drawn())
+  expect(card.props.flexDirection).toBe('column')
+  expect(card.props.gap).toBe('sm')
+  // status sits right after the name in one Text run (no fixed-width columns to misalign)
+  const li = (card.children as any[]).find((c: any) => c.type === 'Box' && textAll(c).startsWith('LinkedIn'))
+  expect(textAll(li)).toMatch(/^LinkedIn · 1 new$/)
   await ui.unmount()
 })
