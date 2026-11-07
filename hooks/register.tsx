@@ -318,6 +318,34 @@ const commitShare = ($: any, fn: (s: Share) => Share): Promise<unknown> => {
   return run
 }
 
+/**
+ * Open an https link in the user's default browser. No shell is involved, so "&" in a URL is safe.
+ * A launcher that stays alive (some xdg-open setups wait for the browser) is not a failure: it timed out
+ * only because the browser took over, so a timeout counts as opened.
+ */
+const openUrl = async ($: any, url: string): Promise<boolean> => {
+  if (!/^https:\/\//.test(url) || url.length > 2048) return false
+  const run = async (argv: string[]) => {
+    const t0 = await $.clock.now()
+    try {
+      const r = await $.process.run(argv, { timeoutMs: 2500 })
+      return r.exitCode === 0
+    } catch {
+      return (await $.clock.now()) - t0 >= 2400 // still running at the timeout: the browser is up
+    }
+  }
+  let os = ''
+  try {
+    const r = await $.process.run(['uname', '-s'], { timeoutMs: 2000 })
+    if (r.exitCode === 0) os = String(r.stdout).trim()
+  } catch {
+    // no uname: Windows
+  }
+  if (os === 'Darwin') return run(['open', url])
+  if (os) return run(['xdg-open', url])
+  return run(['rundll32', 'url.dll,FileProtocolHandler', url])
+}
+
 const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The newest done line is also logged as a shareable progress update for the user's project, so make it a real, specific accomplishment written as one clear sentence (for example "Added login rate limiting"); never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
 
 export const register: Register = on => {
@@ -505,7 +533,7 @@ export const register: Register = on => {
     const t = await read($, timer)
     const tok = await read($, tokens)
     const table = $.ui.resolve(e)
-    const { Box, Text, Button, Link } = table
+    const { Box, Text, Button } = table
     // Desktop/editor/mobile draw an interactive SVG, whose <title> is a native tooltip; the terminal has none.
     const Svg = e.surface !== 'terminal' && 'Svg' in table ? table.Svg : null
 
@@ -609,6 +637,17 @@ export const register: Register = on => {
         await commitShare($, st => ({ ...st, drafting: '' }))
       }
     }
+    // Open the prefilled compose page in the browser; if that fails, hand the link over via the clipboard.
+    const openFor = async (p: Plat) => {
+      const url = (await read($, share)).drafts[p]?.url
+      if (!url) return
+      if (await openUrl($, url)) {
+        $.ui.toast(`Opening ${PLAT_LABEL[p]}. Review the post there, then press Post.`, { timeoutMs: 5000 })
+      } else {
+        await safely(() => $.ui.copy({ text: url, surface: e.surface }))
+        $.ui.toast(`Couldn't open the browser. The ${PLAT_LABEL[p]} link is copied.`, { timeoutMs: 6000 })
+      }
+    }
     // The user says they posted: that platform is up to date as of now.
     const postedFor = async (p: Plat) => {
       const at = await $.clock.now()
@@ -643,19 +682,21 @@ export const register: Register = on => {
               const n = unsharedFor(sh, p).length
               const d = sh.drafts[p]
               return (
-                <Box gap={1} alignItems="center">
-                  <Svg source={imgSvg(SHARE_PNG[p], 18)} alt={PLAT_LABEL[p]} width={18} height={18} />
-                  <Text bold>{PLAT_LABEL[p]}</Text>
-                  <Text color={n === 0 ? 'success' : badgeColor[badgeLevel(n)]}>{n === 0 ? 'up to date' : `${n} new`}</Text>
-                  {n > 0 ? (
-                    <Button key={`draft-${p}`} label={sh.drafting === p ? 'Drafting…' : d ? 'Redraft' : 'Draft post'} onPress={() => draftFor(p)} />
+                <Box flexDirection="column">
+                  <Box gap={1} alignItems="center">
+                    <Svg source={imgSvg(SHARE_PNG[p], 18)} alt={PLAT_LABEL[p]} width={18} height={18} />
+                    <Text bold>{PLAT_LABEL[p]}</Text>
+                    <Text color={n === 0 ? 'success' : badgeColor[badgeLevel(n)]}>{n === 0 ? 'up to date' : `${n} new`}</Text>
+                  </Box>
+                  {n > 0 || d ? (
+                    <Box gap={1} alignItems="center">
+                      {n > 0 ? (
+                        <Button key={`draft-${p}`} label={sh.drafting === p ? 'Drafting…' : d ? 'Redraft' : 'Draft post'} onPress={() => draftFor(p)} />
+                      ) : null}
+                      {d ? <Button key={`open-${p}`} label="Open" onPress={() => openFor(p)} /> : null}
+                      <Button key={`posted-${p}`} label="Posted" onPress={() => postedFor(p)} />
+                    </Box>
                   ) : null}
-                  {d ? (
-                    <Text>
-                      <Link href={d.url}>Open ↗</Link>
-                    </Text>
-                  ) : null}
-                  {n > 0 || d ? <Button key={`posted-${p}`} label="Posted" onPress={() => postedFor(p)} /> : null}
                 </Box>
               )
             })}
@@ -667,7 +708,7 @@ export const register: Register = on => {
                 {gh.branch ? <Text color="subtle">{gh.branch}</Text> : null}
               </Box>
             ) : null}
-            <Text color="subtle">Drafts are AI-written from your updates. Nothing posts until you do.</Text>
+            <Text color="subtle">AI drafts from your updates. Nothing posts until you do.</Text>
           </Box>
         </Box>
       ) : null

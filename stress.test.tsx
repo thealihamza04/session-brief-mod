@@ -27,7 +27,10 @@ type Boot = {
   cwd?: string
   git?: string | null // stdout of `git status --porcelain -b`; null = not a repo
   model?: string | null // reply of model.complete; null = the model is unavailable
+  os?: 'Linux' | 'Darwin' | 'Windows' // what `uname` says (Windows has no uname)
+  openFails?: boolean // the browser launcher exits non-zero
 }
+let opened: string[][] = []
 let copied: string[] = []
 let modelCalls: string[] = []
 
@@ -43,6 +46,7 @@ async function boot($: any, on: any, o: Boot = {}) {
   on('tool.register', () => ({ value: { tool: TOOL } }))
   copied = []
   modelCalls = []
+  opened = []
   on('session.cwd', () => ({ value: o.cwd ?? '/work/demo-project' }))
   on('ui.copy', (_: any, e: any) => {
     copied.push(String(e.text))
@@ -59,6 +63,15 @@ async function boot($: any, on: any, o: Boot = {}) {
       return o.git == null
         ? { value: { exitCode: 128, stdout: '', stderr: 'not a git repository' } }
         : { value: { exitCode: 0, stdout: o.git, stderr: '' } }
+    }
+    if (e.argv?.[0] === 'uname') {
+      return (o.os ?? 'Linux') === 'Windows'
+        ? { value: { exitCode: 127, stdout: '', stderr: 'not found' } }
+        : { value: { exitCode: 0, stdout: `${o.os ?? 'Linux'}\n`, stderr: '' } }
+    }
+    if (['xdg-open', 'open', 'rundll32'].includes(e.argv?.[0])) {
+      opened.push([...e.argv])
+      return { value: { exitCode: o.openFails ? 1 : 0, stdout: '', stderr: '' } }
     }
     if (o.ps instanceof Error) throw o.ps
     return { value: { exitCode: 0, stdout: o.ps ?? '', stderr: '' } }
@@ -762,10 +775,10 @@ test('share: draft - AI text, prefilled X link, copied to the clipboard, prompt 
   await upd($, 'login page'); await clock.advance(MIN)
   await upd($, 'rate limiter')
   await ui.press({ key: 'draft-x' })
-  const root = await ui.drawn()
-  const link = findAllType(root, 'Link')[0]
-  expect(link.props.href).toMatch(/^https:\/\/x\.com\/intent\/post\?text=/)
-  expect(decodeURIComponent(link.props.href.split('text=')[1])).toContain('Shipped the share tracker')
+  await ui.press({ key: 'open-x' })
+  const href = opened.at(-1)![1]!
+  expect(href).toMatch(/^https:\/\/x\.com\/intent\/post\?text=/)
+  expect(decodeURIComponent(href.split('text=')[1]!)).toContain('Shipped the share tracker')
   expect(copied.at(-1)).toContain('Shipped the share tracker')
   expect(modelCalls.at(-1)).toMatch(/demo-project/)
   expect(modelCalls.at(-1)).toMatch(/update login page/)
@@ -794,7 +807,7 @@ test('share: model unavailable -> a plain template draft from the updates (still
   await ui.press({ key: 'draft-linkedin' })
   expect(copied.at(-1)).toMatch(/Progress update on demo-project/)
   expect(copied.at(-1)).toMatch(/update alpha/)
-  expect(findAllType(await ui.drawn(), 'Link').length).toBe(1)
+  expect(btn(await ui.drawn(), 'open-linkedin')).toBeTruthy()
   await ui.unmount()
 })
 
@@ -803,7 +816,8 @@ test('share: long LinkedIn text falls back to the plain compose link (clipboard 
   const ui = await $.ui.mount(desk())
   await upd($, 1)
   await ui.press({ key: 'draft-linkedin' })
-  const href = findAllType(await ui.drawn(), 'Link')[0].props.href as string
+  await ui.press({ key: 'open-linkedin' })
+  const href = opened.at(-1)![1]!
   expect(href.length).toBeLessThanOrEqual(2048)
   expect(href).toMatch(/^https:\/\/www\.linkedin\.com\/feed\/\?shareActive=true/)
   expect(copied.at(-1)!.length).toBeGreaterThan(100)
@@ -910,12 +924,13 @@ test('share: the card holds the logos, an Open link only after a draft, and the 
   await upd($, 1)
   let card = shareCard(await ui.drawn())
   expect(findAllType(card, 'Svg').length).toBeGreaterThanOrEqual(3) // LinkedIn, X, GitHub (when a repo)
-  expect(findAllType(card, 'Link').length).toBe(0)
+  expect(findAllType(card, 'Button').find((b: any) => b.props?.key === 'open-linkedin')).toBeUndefined()
   expect(textAll(card)).toMatch(/Nothing posts until you do/)
   await ui.press({ key: 'draft-linkedin' })
   card = shareCard(await ui.drawn())
-  expect(findAllType(card, 'Link').length).toBe(1)
-  expect(textAll(card)).toMatch(/Open ↗/)
+  expect(findAllType(card, 'Button').find((b: any) => b.props?.key === 'open-linkedin')).toBeTruthy()
+  expect(findAllType(card, 'Link').length).toBe(0) // the desktop does not open Links drawn by a mod
+  expect(findAllType(card, 'Button').find((b: any) => b.props?.key === 'open-linkedin').props.label).toBe('Open')
   await ui.unmount()
 })
 
@@ -967,5 +982,93 @@ test('spacing: real one-cell spacers separate glass, megaphone, count and chip (
   )
   // glass | megaphone | count | chip...
   expect(kinds.slice(0, 7).join('')).toBe('G|M|#|x')
+  await ui.unmount()
+})
+
+// ---------- opening the compose page (a real Button, not a Link) ----------
+
+test('open: Linux launches xdg-open with the exact https URL (no shell, & intact)', async ($, on) => {
+  await boot($, on, { os: 'Linux', model: 'Hello & welcome <b>to</b> my "post"' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-linkedin' })
+  await ui.press({ key: 'open-linkedin' })
+  expect(opened.length).toBe(1)
+  expect(opened[0]![0]).toBe('xdg-open')
+  expect(opened[0]!.length).toBe(2) // argv, not a shell string
+  expect(opened[0]![1]).toMatch(/^https:\/\/www\.linkedin\.com\/feed\/\?shareActive=true&text=/)
+  expect(decodeURIComponent(opened[0]![1]!.split('&text=')[1]!)).toBe('Hello & welcome <b>to</b> my "post"')
+  expect(toasts.some(t => /Opening LinkedIn/.test(t))).toBe(true)
+  await ui.unmount()
+})
+
+test('open: macOS uses open, Windows uses rundll32 (no cmd, so & cannot split the command)', async ($, on) => {
+  await boot($, on, { os: 'Darwin', model: 'post' })
+  let ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-x' })
+  await ui.press({ key: 'open-x' })
+  expect(opened.at(-1)![0]).toBe('open')
+  await ui.unmount()
+})
+
+test('open: Windows has no uname and falls back to rundll32', async ($, on) => {
+  await boot($, on, { os: 'Windows', model: 'post' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-x' })
+  await ui.press({ key: 'open-x' })
+  expect(opened.at(-1)!.slice(0, 2)).toEqual(['rundll32', 'url.dll,FileProtocolHandler'])
+  expect(opened.at(-1)![2]).toMatch(/^https:\/\/x\.com\//)
+  await ui.unmount()
+})
+
+test('open: if the browser cannot be launched, the link is copied and you are told', async ($, on) => {
+  await boot($, on, { openFails: true, model: 'post' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-x' })
+  await ui.press({ key: 'open-x' })
+  expect(toasts.some(t => /Couldn't open the browser/.test(t))).toBe(true)
+  expect(copied.at(-1)).toMatch(/^https:\/\/x\.com\/intent\/post/)
+  await ui.unmount()
+})
+
+test('open: opening does not mark anything as posted', async ($, on) => {
+  await boot($, on, { model: 'post' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-x' })
+  await ui.press({ key: 'open-x' })
+  expect(await unsharedOf(ui)).toBe(1)
+  await ui.unmount()
+})
+
+test('open: only https links are ever launched (a tampered stored draft is dropped)', async ($, on) => {
+  await boot($, on, {
+    cwd: '/work/t',
+    store: { 'share:/work/t': { log: [{ at: NOW - MIN, text: 'x' }], shared: {}, drafts: { x: { text: 'hi', url: 'file:///etc/passwd', at: 1 }, linkedin: { text: 'hi', url: 'http://evil.example/', at: 1 } } } },
+  })
+  const ui = await $.ui.mount(desk())
+  const root = await ui.drawn()
+  expect(btn(root, 'open-x')).toBeUndefined()
+  expect(btn(root, 'open-linkedin')).toBeUndefined()
+  expect(opened.length).toBe(0)
+  await ui.unmount()
+})
+
+test('layout: each platform is a stacked block (name + status above, buttons below) so nothing wraps', async ($, on) => {
+  await boot($, on, { model: 'post' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-linkedin' })
+  const card = shareCard(await ui.drawn())
+  const blocks = (card.children as any[]).filter((c: any) => c.type === 'Box' && c.props?.flexDirection === 'column')
+  expect(blocks.length).toBe(2) // LinkedIn and X
+  const linkedin = blocks[0]
+  expect(linkedin.children.length).toBe(2) // header row + buttons row
+  expect(textAll(linkedin.children[0])).toMatch(/LinkedIn1 new/)
+  expect(findAllType(linkedin.children[0], 'Button').length).toBe(0) // no buttons beside the name
+  expect(findAllType(linkedin.children[1], 'Button').length).toBe(3) // Redraft, Open, Posted
   await ui.unmount()
 })
