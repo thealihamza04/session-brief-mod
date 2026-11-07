@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Brief, ChatTimer } from '../types'
+import type { Brief, ChatTimer, Water } from '../types'
 
 const TOOL = 'mcp__session-brief__set_brief'
 
@@ -20,6 +20,12 @@ const timer = atom(
   { plugin: 'session-brief', key: 'timer' } as const,
   { openedAt: 0, startedAt: 0, lastActive: 0, now: 0 } as ChatTimer,
 )
+// The glass drains linearly over this long, then you are nudged to drink.
+const DRAIN_MS = 45 * 60 * 1000
+// While it stays empty and you keep working, remind again this often.
+const NUDGE_EVERY_MS = 15 * 60 * 1000
+
+const water = atom({ plugin: 'session-brief', key: 'water' } as const, { lastDrink: 0 } as Water)
 const tokens = atom({ plugin: 'session-brief', key: 'tokens' } as const, 0)
 
 // ---------- small, defensive helpers ----------
@@ -52,6 +58,15 @@ const compact = (n: number) => {
   } while (x >= 999.5 && i < units.length - 1)
   return `${x < 10 ? x.toFixed(1) : Math.round(x)}${units[i]}`
 }
+
+/** How full the glass is, 0..1. A refill dated in the future (clock set back) counts as full. */
+const fill = (now: number, lastDrink: number) => {
+  if (!lastDrink || !now) return 1
+  return Math.max(0, Math.min(1, 1 - Math.max(0, now - lastDrink) / DRAIN_MS))
+}
+const LEVELS = '▁▂▃▄▅▆▇█'
+const glassGlyph = (f: number) => LEVELS[Math.max(0, Math.min(7, Math.round(f * 7)))] ?? '▁'
+const glassColor = (f: number) => (f > 0.5 ? 'suggestion' : f > 0.2 ? 'warning' : 'error')
 
 // ps "etime" is [[dd-]hh:]mm:ss
 const etimeMs = (e: string) => {
@@ -172,6 +187,11 @@ export const register: Register = on => {
     const savedTokens = num(await $.store.get(`tokens:${id}`))
     if (savedTokens > 0) await safely(() => update($, tokens, () => savedTokens))
 
+    // The glass is shared by every session too.
+    const savedDrink = num(((await $.store.get('water')) as { lastDrink?: unknown } | undefined)?.lastDrink)
+    await safely(() => update($, water, () => ({ lastDrink: savedDrink || now })))
+    if (!savedDrink) await safely(() => $.store.set('water', { lastDrink: now }))
+
     // The work stretch is shared by every session (kept in the plugin store).
     const stretch = asStretch(await $.store.get('stretch'))
 
@@ -205,6 +225,19 @@ export const register: Register = on => {
       await safely(async () => {
         const at = await $.clock.now()
         await update($, timer, x => ({ ...x, now: at }))
+
+        // Nudge: the glass is empty, you are working, and we have not nagged lately.
+        const w = await read($, water)
+        const stretch = asStretch(await $.store.get('stretch'))
+        const isWorking = stretch !== null && at - stretch.lastActive <= BREAK_MS
+        if (fill(at, w.lastDrink) <= 0 && isWorking) {
+          const nudge = (await $.store.get('waterNudge')) as { for?: unknown; at?: unknown } | undefined
+          const isDue = nudge?.for !== w.lastDrink || at - num(nudge?.at) >= NUDGE_EVERY_MS
+          if (isDue) {
+            await $.store.set('waterNudge', { for: w.lastDrink, at })
+            $.ui.toast('Time for a glass of water. Press the glass to refill it.', { timeoutMs: 8000 })
+          }
+        }
       })
     })
 
@@ -294,7 +327,7 @@ export const register: Register = on => {
     const t = await read($, timer)
     const tok = await read($, tokens)
     const table = $.ui.resolve(e)
-    const { Box, Text } = table
+    const { Box, Text, Button } = table
     // Desktop/editor/mobile draw an interactive SVG, whose <title> is a native tooltip; the terminal has none.
     const Svg = e.surface !== 'terminal' && 'Svg' in table ? table.Svg : null
 
@@ -305,8 +338,14 @@ export const register: Register = on => {
     const openedAt = Math.min(num(t.openedAt), now)
     const isIdle = startedAt !== 0 && now - lastActive > BREAK_MS
 
+    // The water glass: drains over DRAIN_MS; pressing it refills.
+    const level = fill(now, num((await read($, water)).lastDrink))
+    const glass: Seg = { t: `${glassGlyph(level)} `, c: glassColor(level), bold: true, press: 'water' }
+    const thirsty: Seg[] =
+      level <= 0 ? [{ t: ' drink water ', c: 'inverseText', bg: 'error', bold: true }, { t: ' ', c: 'subtle' }] : []
+
     // A line is a list of styled runs; widths are measured on their plain text.
-    type Seg = { t: string; c?: string; bg?: string; bold?: boolean }
+    type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' }
     const plain = (line: Seg[]) => line.map(x => x.t).join('')
 
     const left: Seg[][] = [
@@ -321,15 +360,15 @@ export const register: Register = on => {
     ]
     const right: Seg[][] =
       startedAt === 0
-        ? [[], [], []]
+        ? [[glass, ...thirsty], [], []]
         : isIdle
           ? [
-              [{ t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
+              [glass, ...thirsty, { t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
               [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }],
               appLine,
             ]
           : [
-              [{ t: '● ', c: 'success' }, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
+              [glass, ...thirsty, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
               [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: clockTime(startedAt), c: 'text' }],
               appLine,
             ]
@@ -349,12 +388,28 @@ export const register: Register = on => {
       if (cells(plain(head)) + 1 > width) return [{ t: clip(plain(line), width), c: head[0]?.c ?? last.c }]
       return [...head, { ...last, t: clip(last.t, width - cells(plain(head))) }]
     }
+    const refill = async () => {
+      const at = await $.clock.now()
+      await safely(async () => {
+        await update($, water, () => ({ lastDrink: at }))
+        await $.store.set('water', { lastDrink: at })
+      })
+      $.ui.toast('Glass refilled. Keep it up.', { timeoutMs: 2500 })
+    }
     const runs = (line: Seg[]) =>
-      line.map(x => (
-        <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
-          {x.t}
-        </Text>
-      ))
+      line.map(x =>
+        x.press ? (
+          <Button key="water" plain label="Drink water: refill the glass" onPress={refill}>
+            <Text color={x.c} bold={x.bold}>
+              {x.t}
+            </Text>
+          </Button>
+        ) : (
+          <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
+            {x.t}
+          </Text>
+        ),
+      )
 
     return (
       <Box flexDirection="column">
@@ -367,7 +422,7 @@ export const register: Register = on => {
             <Box key={`row${i}`} flexDirection="column">
               <Box justifyContent="space-between">
                 <Text>{runs(fit(l, avail))}</Text>
-                <Text>{hasRight ? runs(right[i] ?? []) : ''}</Text>
+                <Box>{hasRight ? runs(right[i] ?? []) : <Text>{''}</Text>}</Box>
               </Box>
               {isCut || hidden ? (
                 Svg ? (

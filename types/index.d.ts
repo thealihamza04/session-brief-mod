@@ -16,8 +16,13 @@ export type ChatTimer = {
   now: number
 }
 
+export type Water = {
+  /** ms epoch the glass was last filled (0 = never seen) */
+  lastDrink: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number }
+    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number; water: Water }
   }
 }
