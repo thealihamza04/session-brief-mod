@@ -13,7 +13,7 @@ A Claude Code mod that draws three dim lines above the prompt:
 
 ## Colors, icons and hover
 
-Each line is color-coded with the terminal theme's own colors: `◎` purpose (blue), `✓` done (green, the older one dimmed), `●` active / `⏸` idle chips (blue / amber highlight), `◷` start time, `▣` app uptime, `◆` tokens (purple). When a line is cut to fit a narrow window, hovering it shows the full text (plus the hidden time column, if it was dropped) in a card that floats over the band and adds no height. The terminal has no floating cards, so there the full line expands in place.
+Each line is color-coded with the terminal theme's own colors: `◎` purpose (blue), `✓` done (green, the older one dimmed), `●` active / `⏸` idle chips (blue / amber highlight), `◷` start time, `▣` app uptime, `◆` tokens (purple). When a line is cut off to fit a narrow window, hovering that line's own text (not the time column, the glass or the other lines) shows the full text (plus the hidden time column, if it was dropped) in a card that floats over the band and adds no height. The terminal has no floating cards, so there the full line expands in place.
 
 ## Water glass
 
@@ -44,7 +44,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 69 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 73 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

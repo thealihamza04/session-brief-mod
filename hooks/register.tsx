@@ -446,24 +446,34 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {left.map((l, i) => {
           const full = plain(l)
+          // A card only where the text is really cut off, never for a line that fits.
           const isCut = cells(full) > avail
           const hidden = !hasRight && plain(right[i] ?? []) !== ''
           const tip = `${full}${hidden ? `  ·  ${plain(right[i] ?? [])}` : ''}`
+          // The card belongs to a hover group that only this line's own text joins, so the
+          // time column, the glass and the other lines never open it.
+          const group = `tip${i}`
           return (
-            <Box key={`row${i}`} flexDirection="column">
+            <Box flexDirection="column">
               <Box justifyContent="space-between">
-                <Text>{runs(fit(l, avail))}</Text>
+                {isCut ? (
+                  <Box hover={{ scope: group }}>
+                    <Text>{runs(fit(l, avail))}</Text>
+                  </Box>
+                ) : (
+                  <Text>{runs(fit(l, avail))}</Text>
+                )}
                 <Box>{hasRight ? runs(right[i] ?? []) : <Text>{''}</Text>}</Box>
               </Box>
-              {isCut || hidden ? (
+              {isCut ? (
                 Svg ? (
                   // Desktop / editor: a hover card (absolute, so no height) with the whole line.
-                  <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
+                  <Box position="absolute" top={0} left={0} display="none" hover={{ scope: group, display: 'flex' }}>
                     <Text wrap="wrap">{tip}</Text>
                   </Box>
                 ) : (
                   // Terminal: the full line expands in place.
-                  <Box display="none" hover={{ display: 'flex' }}>
+                  <Box display="none" hover={{ scope: group, display: 'flex' }}>
                     <Text wrap="wrap" inverse>
                       {tip}
                     </Text>

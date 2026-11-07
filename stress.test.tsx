@@ -335,13 +335,12 @@ test('hover reveal: a clipped line carries its full text', async ($, on) => {
   expect(rs[1].reveal).toBeNull() // nothing cut, nothing to reveal
 })
 
-test('hover reveal: when the right column is hidden, hovering shows it too', async ($, on) => {
+test('hover reveal: only a cut line gets one; a short line with a hidden right column does not', async ($, on) => {
   await boot($, on, { ps: ' 01:07:00 /usr/lib/claude-desktop/claude-desktop\n' })
   await setBrief($, { purpose: 'Short', done: ['a', 'b'] })
   const rs = await bandRows($, 20)
-  expect(rs[0].right).toBe('')
-  expect(rs[0].reveal).toMatch(/Short/)
-  expect(rs[2].reveal).toMatch(/app/) // the app/token info was hidden, so the hover has it
+  expect(rs[0].right).toBe('') // right column dropped for lack of room
+  for (const r of rs) expect(r.reveal).toBeNull() // but nothing is cut, so no card
 })
 
 test('hover reveal: a wide band needs none', async ($, on) => {
@@ -563,5 +562,55 @@ test('desktop hover card is one compact line: percent, time left, short button; 
   expect(textAll(card)).toMatch(/^8\d% · empty in 4\dm$/) // e.g. "89% · empty in 40m", nothing else
   expect(findAllType(card, 'Button')[0].props.label).toBe('Refill')
   expect(findAllType(card, 'Text').some((n: any) => n.props?.inverse)).toBe(false)
+  await ui.unmount()
+})
+
+// ---------- hover scoping: the card opens only from the cut line's own text ----------
+
+const hoverOf = (n: any) => n?.hover as { scope?: string; display?: string } | undefined
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: the card's hover group is joined only by the cut line's own text`, async ($, on) => {
+    await boot($, on)
+    await setBrief($, { purpose: 'Purpose that is much too long to fit in a narrow band like this one', done: ['short', 'tiny'] })
+    const ui = await $.ui.mount({ ...BAND(40), surface })
+    const root = await ui.drawn()
+    const boxes = findAllType(root, 'Box')
+    const triggers = boxes.filter((b: any) => hoverOf(b)?.scope && hoverOf(b)?.display !== 'flex')
+    const cards = boxes.filter((b: any) => hoverOf(b)?.scope && hoverOf(b)?.display === 'flex' && textAll(b).includes('Purpose'))
+    expect(triggers.length).toBe(1)
+    expect(cards.length).toBe(1)
+    expect(hoverOf(triggers[0])!.scope).toBe(hoverOf(cards[0])!.scope) // same group
+    // the trigger is the line's text only: no time column, no glass button inside it
+    expect(textAll(triggers[0])).toMatch(/^◎ Purpose/)
+    expect(findAllType(triggers[0], 'Button').length).toBe(0)
+    expect(textAll(triggers[0])).not.toMatch(/work|since|app/)
+    // no keyed row Box is left to widen the hover area to the whole row
+    const keyedRows = boxes.filter((b: any) => /^row\d$/.test(b.props?.key ?? ''))
+    expect(keyedRows.length).toBe(0)
+    await ui.unmount()
+  })
+}
+
+test('no card at all when nothing is cut, on any surface', async ($, on) => {
+  await boot($, on)
+  await setBrief($, { purpose: 'Short', done: ['a', 'b'] })
+  for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
+    const ui = await $.ui.mount({ ...BAND(100), surface })
+    const boxes = findAllType(await ui.drawn(), 'Box')
+    // the only hidden Box left is the water glass's own card
+    expect(boxes.filter((b: any) => b.props?.display === 'none').length).toBe(1)
+    expect(boxes.filter((b: any) => /^tip\d$/.test(hoverOf(b)?.scope ?? '')).length).toBe(0)
+    await ui.unmount()
+  }
+})
+
+test('two cut lines get two separate groups', async ($, on) => {
+  await boot($, on)
+  await setBrief($, { purpose: 'P'.repeat(80), done: ['D'.repeat(80), 'x'] })
+  const ui = await $.ui.mount({ ...BAND(40), surface: 'desktop' })
+  const scopes = findAllType(await ui.drawn(), 'Box').map((b: any) => hoverOf(b)?.scope).filter((v: any) => /^tip\d$/.test(v ?? ''))
+  expect(new Set(scopes).size).toBe(2)
+  expect(scopes.length).toBe(4) // a trigger and a card for each
   await ui.unmount()
 })
