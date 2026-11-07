@@ -20,7 +20,16 @@ const completeTurn = ($: any, u: any) => {
   return $.turn.complete({ reason: 'answer', answer: '' })
 }
 
-type Boot = { store?: Record<string, unknown>; ps?: string | Error; now?: number }
+type Boot = {
+  store?: Record<string, unknown>
+  ps?: string | Error
+  now?: number
+  cwd?: string
+  git?: string | null // stdout of `git status --porcelain -b`; null = not a repo
+  model?: string | null // reply of model.complete; null = the model is unavailable
+}
+let copied: string[] = []
+let modelCalls: string[] = []
 
 async function boot($: any, on: any, o: Boot = {}) {
   const clock = mock.clock(on, { now: o.now ?? NOW })
@@ -32,7 +41,25 @@ async function boot($: any, on: any, o: Boot = {}) {
   })
   on('session.id', () => ({ value: 's1' }))
   on('tool.register', () => ({ value: { tool: TOOL } }))
-  on('process.run', () => {
+  copied = []
+  modelCalls = []
+  on('session.cwd', () => ({ value: o.cwd ?? '/work/demo-project' }))
+  on('ui.copy', (_: any, e: any) => {
+    copied.push(String(e.text))
+    return { value: { isCopied: true } }
+  })
+  on('model.complete', (_: any, e: any) => {
+    modelCalls.push(String(e.prompt))
+    return o.model == null
+      ? { value: { isAnswered: false, reason: 'api-error', usage: {} } }
+      : { value: { isAnswered: true, text: o.model, usage: {} } }
+  })
+  on('process.run', (_: any, e: any) => {
+    if (e.argv?.[0] === 'git') {
+      return o.git == null
+        ? { value: { exitCode: 128, stdout: '', stderr: 'not a git repository' } }
+        : { value: { exitCode: 0, stdout: o.git, stderr: '' } }
+    }
     if (o.ps instanceof Error) throw o.ps
     return { value: { exitCode: 0, stdout: o.ps ?? '', stderr: '' } }
   })
@@ -370,7 +397,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
     expect(cards.length).toBe(1) // only the cut line gets one
     expect(cards[0].props.position).toBe('absolute') // adds no height
     expect(textAll(cards[0])).toContain(purpose) // the whole line, not clipped
-    expect(hidden.length).toBe(2) // + the water glass's card
+    expect(hidden.length).toBe(3) // + the water glass's card and the share card
     // the old invisible-SVG tooltip is gone
     expect(findAllType(root, 'Svg').filter((v: any) => v.props.isInteractive).length).toBe(0)
     await ui.unmount()
@@ -598,8 +625,8 @@ test('no card at all when nothing is cut, on any surface', async ($, on) => {
   for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ ...BAND(100), surface })
     const boxes = findAllType(await ui.drawn(), 'Box')
-    // the only hidden Box left is the water glass's own card
-    expect(boxes.filter((b: any) => b.props?.display === 'none').length).toBe(1)
+    // the only hidden Boxes left are the water glass's card and (where images exist) the share card
+    expect(boxes.filter((b: any) => b.props?.display === 'none').length).toBe(surface === 'terminal' ? 1 : 2)
     expect(boxes.filter((b: any) => /^tip\d$/.test(hoverOf(b)?.scope ?? '')).length).toBe(0)
     await ui.unmount()
   }
@@ -612,5 +639,301 @@ test('two cut lines get two separate groups', async ($, on) => {
   const scopes = findAllType(await ui.drawn(), 'Box').map((b: any) => hoverOf(b)?.scope).filter((v: any) => /^tip\d$/.test(v ?? ''))
   expect(new Set(scopes).size).toBe(2)
   expect(scopes.length).toBe(4) // a trigger and a card for each
+  await ui.unmount()
+})
+
+// ====================================================================
+// share tracker: update log, badge, nudges, drafts, "posted", git row
+// ====================================================================
+
+const upd = ($: any, i: number | string) => setBrief($, { purpose: 'Proj', done: [`update ${i}`, 'older'] })
+const desk = (cols = 100) => ({ ...BAND(cols), surface: 'desktop' }) as any
+const shareCard = (root: any) =>
+  findAllType(root, 'Box').find((b: any) => b.props?.display === 'none' && textAll(b).includes('Share your progress'))
+const iconSources = (root: any) => findAllType(root, 'Svg').map((v: any) => v.props.source as string)
+const btn = (root: any, key: string) => findAllType(root, 'Button').find((b: any) => b.props?.key === key)
+const badgeText = async (ui: any) => (await rows(ui))[1]?.right ?? ''
+const shareToasts = () => toasts.filter(t => /not shared yet/.test(t))
+
+test('share: each new done line is logged once; the megaphone badge counts them', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  expect(await badgeText(ui)).not.toMatch(/\d ◷/) // nothing yet: no number
+  await upd($, 1)
+  await upd($, 1) // same line again: not a new update
+  await upd($, 2)
+  expect(await badgeText(ui)).toMatch(/2 ◷ since/)
+  await ui.unmount()
+})
+
+test('share: nudges at 3 unshared updates, then again at 6, never in between', async ($, on) => {
+  await boot($, on)
+  for (let i = 1; i <= 2; i++) await upd($, i)
+  expect(shareToasts().length).toBe(0)
+  await upd($, 3)
+  expect(shareToasts().length).toBe(1)
+  await upd($, 4)
+  await upd($, 5)
+  expect(shareToasts().length).toBe(1)
+  await upd($, 6)
+  expect(shareToasts().length).toBe(2)
+  expect(shareToasts()[0]).toMatch(/^3 updates not shared yet/)
+})
+
+test('share: the user scenario - post, work more, and the warning comes back with only the NEW updates', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 1; i <= 4; i++) {
+    await clock.advance(MIN)
+    await upd($, `a${i}`)
+  }
+  expect(await badgeText(ui)).toMatch(/4 ◷/)
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-linkedin' })
+  await ui.press({ key: 'posted-x' })
+  expect(await badgeText(ui)).not.toMatch(/\d ◷/) // 0 unshared: badge gone
+  // two more hours of work, two updates
+  await clock.advance(60 * MIN)
+  await upd($, 'b1')
+  await clock.advance(60 * MIN)
+  await upd($, 'b2')
+  expect(await badgeText(ui)).toMatch(/2 ◷/) // only the new ones, not the 4 already posted
+  await ui.unmount()
+})
+
+test('share: posting on one platform only keeps the badge until both are done; each row has its own status', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 1; i <= 3; i++) {
+    await clock.advance(MIN)
+    await upd($, i)
+  }
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-linkedin' })
+  expect(await badgeText(ui)).toMatch(/3 ◷/) // X still has all 3
+  const card = textAll(shareCard(await ui.drawn()))
+  expect(card).toMatch(/LinkedIn\s*up to date/)
+  expect(card).toMatch(/X\s*3 new/)
+  await ui.unmount()
+})
+
+test('share: nudge counting restarts after you post', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 1; i <= 3; i++) {
+    await clock.advance(MIN)
+    await upd($, i)
+  }
+  expect(shareToasts().length).toBe(1)
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-linkedin' })
+  await ui.press({ key: 'posted-x' })
+  for (let i = 4; i <= 6; i++) {
+    await clock.advance(MIN)
+    await upd($, i)
+  }
+  expect(shareToasts().length).toBe(2) // a fresh "3 not shared" after the post
+  await ui.unmount()
+})
+
+test('share: megaphone tint steps up with the count (0, a few, several, many)', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  // the megaphone is the first image inside the keyed "share" Box (the card's logos come after it)
+  const mega = async () => {
+    const box = findAllType(await ui.drawn(), 'Box').find((b: any) => b.props?.key === 'share')
+    return (box.children[0] as any).props.source as string
+  }
+  const seen: Record<number, string> = { 0: await mega() }
+  let n = 0
+  for (const target of [1, 3, 6]) {
+    while (n < target) await upd($, `t${++n}`)
+    seen[target] = await mega()
+  }
+  expect(new Set(Object.values(seen)).size).toBe(4) // none / few / several / many
+  await ui.unmount()
+})
+
+test('share: draft - AI text, prefilled X link, copied to the clipboard, prompt carries the project and updates', async ($, on) => {
+  const clock = await boot($, on, { model: 'Shipped the share tracker for demo-project. #buildinpublic' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 'login page'); await clock.advance(MIN)
+  await upd($, 'rate limiter')
+  await ui.press({ key: 'draft-x' })
+  const root = await ui.drawn()
+  const link = findAllType(root, 'Link')[0]
+  expect(link.props.href).toMatch(/^https:\/\/x\.com\/intent\/post\?text=/)
+  expect(decodeURIComponent(link.props.href.split('text=')[1])).toContain('Shipped the share tracker')
+  expect(copied.at(-1)).toContain('Shipped the share tracker')
+  expect(modelCalls.at(-1)).toMatch(/demo-project/)
+  expect(modelCalls.at(-1)).toMatch(/update login page/)
+  expect(modelCalls.at(-1)).toMatch(/update rate limiter/)
+  expect(toasts.some(t => /draft ready and copied/.test(t))).toBe(true)
+  await ui.unmount()
+})
+
+test('share: model output is cleaned and clipped (X <= 280 chars, LinkedIn <= 1300, no ANSI)', async ($, on) => {
+  await boot($, on, { model: '\u001b[31mBIG\u001b[0m\n\n\n\n' + 'word '.repeat(2000) })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-x' })
+  expect(copied.at(-1)!.length).toBeLessThanOrEqual(280)
+  expect(copied.at(-1)).not.toMatch(/\u001b|\[31m/)
+  await ui.press({ key: 'draft-linkedin' })
+  expect(copied.at(-1)!.length).toBeLessThanOrEqual(1300)
+  expect(copied.at(-1)).not.toMatch(/\n{3,}/)
+  await ui.unmount()
+})
+
+test('share: model unavailable -> a plain template draft from the updates (still usable)', async ($, on) => {
+  await boot($, on, { model: null })
+  const ui = await $.ui.mount(desk())
+  await upd($, 'alpha'); await upd($, 'beta')
+  await ui.press({ key: 'draft-linkedin' })
+  expect(copied.at(-1)).toMatch(/Progress update on demo-project/)
+  expect(copied.at(-1)).toMatch(/update alpha/)
+  expect(findAllType(await ui.drawn(), 'Link').length).toBe(1)
+  await ui.unmount()
+})
+
+test('share: long LinkedIn text falls back to the plain compose link (clipboard keeps the full text)', async ($, on) => {
+  await boot($, on, { model: '日本語のとても長い投稿 🚀 '.repeat(200) })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-linkedin' })
+  const href = findAllType(await ui.drawn(), 'Link')[0].props.href as string
+  expect(href.length).toBeLessThanOrEqual(2048)
+  expect(href).toMatch(/^https:\/\/www\.linkedin\.com\/feed\/\?shareActive=true/)
+  expect(copied.at(-1)!.length).toBeGreaterThan(100)
+  await ui.unmount()
+})
+
+test('share: no draft/posted buttons when nothing is unshared', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  const root = await ui.drawn()
+  expect(btn(root, 'draft-x')).toBeUndefined()
+  expect(btn(root, 'posted-linkedin')).toBeUndefined()
+  expect(textAll(shareCard(root))).toMatch(/all shared/)
+  await ui.unmount()
+})
+
+test('share: the log is per project (another project starts at zero)', async ($, on) => {
+  const seeded = { share: undefined } as any
+  void seeded
+  const now = NOW - 10 * MIN
+  await boot($, on, { cwd: '/work/b', store: { 'share:/work/a': { log: [{ at: now, text: 'a1' }, { at: now + 1, text: 'a2' }], shared: { linkedin: 0, x: 0 } } } })
+  const ui = await $.ui.mount(desk())
+  expect(await badgeText(ui)).not.toMatch(/\d ◷/)
+  await ui.unmount()
+})
+
+test('share: the same project in another session sees the saved log', async ($, on) => {
+  const at = NOW - 10 * MIN
+  await boot($, on, { cwd: '/work/a', store: { 'share:/work/a': { log: [{ at, text: 'a1' }, { at: at + 1, text: 'a2' }], shared: { linkedin: 0, x: 0 } } } })
+  const ui = await $.ui.mount(desk())
+  expect(await badgeText(ui)).toMatch(/2 ◷/)
+  await ui.unmount()
+})
+
+for (const [name, bad] of [
+  ['a string', 'junk'],
+  ['wrong types', { log: 'x', shared: 7, drafts: [] }],
+  ['NaN/negative times', { log: [{ at: NaN, text: 'a' }, { at: -5, text: 'b' }], shared: { linkedin: NaN, x: -1 } }],
+  ['non-https draft url', { log: [], shared: {}, drafts: { x: { text: 'hi', url: 'javascript:alert(1)', at: 1 } } }],
+  ['1000 log entries', { log: Array.from({ length: 1000 }, (_, i) => ({ at: NOW - 100 * MIN + i, text: `e${i}` })), shared: {} }],
+  ['hostile log text', { log: [{ at: NOW - MIN, text: '\u001b[31mred\nline\u0007' }], shared: {} }],
+] as const) {
+  test(`share: corrupt store (${name}) never breaks the band`, async ($, on) => {
+    await boot($, on, { cwd: '/work/c', store: { 'share:/work/c': bad as any } })
+    const ui = await $.ui.mount(desk())
+    const root = await ui.drawn()
+    const all = textAll(root) + (await badgeText(ui))
+    expect(all).not.toMatch(/NaN|undefined|\[object|javascript:/)
+    expect(findAllType(root, 'Link').every((l: any) => /^https:\/\//.test(l.props.href))).toBe(true)
+    await ui.unmount()
+  })
+}
+
+test('share: a log longer than 100 is capped at 100', async ($, on) => {
+  await boot($, on, { cwd: '/work/c', store: { 'share:/work/c': { log: Array.from({ length: 1000 }, (_, i) => ({ at: NOW - 100 * MIN + i, text: `e${i}` })), shared: {} } } })
+  const ui = await $.ui.mount(desk())
+  expect(await badgeText(ui)).toMatch(/100 ◷/)
+  await ui.unmount()
+})
+
+for (const [name, out, expected] of [
+  ['clean', '## main...origin/main\n', /GitHub\s*pushed/],
+  ['ahead', '## main...origin/main [ahead 2]\n', /GitHub\s*2 commits not pushed/],
+  ['ahead 1', '## main...origin/main [ahead 1]\n', /GitHub\s*1 commit not pushed/],
+  ['dirty', '## main...origin/main\n M a.ts\n?? b.ts\n', /GitHub\s*2 files not committed/],
+  ['no upstream', '## main\n', /GitHub\s*no upstream, not pushed/],
+  ['new repo', '## No commits yet on main\n?? a\n', /GitHub\s*1 file not committed/],
+] as const) {
+  test(`git row: ${name}`, async ($, on) => {
+    await boot($, on, { git: out })
+    const ui = await $.ui.mount(desk())
+    expect(textAll(shareCard(await ui.drawn()))).toMatch(expected)
+    await ui.unmount()
+  })
+}
+
+test('git row: hidden when the folder is not a repo (or git fails)', async ($, on) => {
+  await boot($, on, { git: null })
+  const ui = await $.ui.mount(desk())
+  expect(textAll(shareCard(await ui.drawn()))).not.toMatch(/GitHub/)
+  await ui.unmount()
+})
+
+test('git row: garbage output is ignored', async ($, on) => {
+  await boot($, on, { git: 'fatal: ???\n\u0000\n' })
+  const ui = await $.ui.mount(desk())
+  expect(textAll(shareCard(await ui.drawn()))).not.toMatch(/GitHub/)
+  await ui.unmount()
+})
+
+test('terminal: no share icon is drawn, but updates are still logged and the nudge still fires', async ($, on) => {
+  await boot($, on)
+  for (let i = 1; i <= 3; i++) await upd($, i)
+  const ui = await $.ui.mount(BAND(100))
+  const root = await ui.drawn()
+  expect(shareCard(root)).toBeUndefined()
+  expect(shareToasts().length).toBe(1)
+  await ui.unmount()
+})
+
+test('share: the card holds the logos, an Open link only after a draft, and the honest footer', async ($, on) => {
+  await boot($, on, { model: 'post', git: '## main...origin/main\n' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  let card = shareCard(await ui.drawn())
+  expect(findAllType(card, 'Svg').length).toBeGreaterThanOrEqual(3) // LinkedIn, X, GitHub (when a repo)
+  expect(findAllType(card, 'Link').length).toBe(0)
+  expect(textAll(card)).toMatch(/Nothing posts until you do/)
+  await ui.press({ key: 'draft-linkedin' })
+  card = shareCard(await ui.drawn())
+  expect(findAllType(card, 'Link').length).toBe(1)
+  expect(textAll(card)).toMatch(/Open ↗/)
+  await ui.unmount()
+})
+
+test('share: the card is absolute (adds no height) and sits in the right column', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  const card = shareCard(await ui.drawn())
+  expect(card.props.position).toBe('absolute')
+  expect(card.props.display).toBe('none')
+  await ui.unmount()
+})
+
+test('share: 200 parallel updates stay consistent (queued writes, capped log, one nudge per 3)', async ($, on) => {
+  await boot($, on)
+  await Promise.all(Array.from({ length: 200 }, (_, i) => upd($, `p${i}`)))
+  expect(shareToasts().length).toBeGreaterThanOrEqual(1)
+  expect(shareToasts().every(t => /^\d+ updates not shared yet/.test(t))).toBe(true)
+  const ui = await $.ui.mount(desk())
+  const n = Number(((await badgeText(ui)).match(/(\d+) ◷/) ?? [])[1])
+  expect(n).toBeGreaterThan(0)
+  expect(n).toBeLessThanOrEqual(100)
   await ui.unmount()
 })

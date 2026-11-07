@@ -16,6 +16,33 @@ export type ChatTimer = {
   now: number
 }
 
+export type Draft = {
+  /** the post text (AI-written, or a plain template if the model was unavailable) */
+  text: string
+  /** an https compose link prefilled with the text where the platform allows it */
+  url: string
+  at: number
+}
+
+export type Share = {
+  /** every "done" update of this project, oldest first (capped) */
+  log: { at: number; text: string }[]
+  /** ms epoch the user last marked a post as shared, per platform (0 = never) */
+  shared: { linkedin: number; x: number }
+  drafts: { linkedin?: Draft; x?: Draft }
+  /** the unshared-update count we last nudged at */
+  nudged: number
+  /** a draft is being written for this platform right now */
+  drafting: '' | 'linkedin' | 'x'
+}
+
+export type Git = {
+  kind: 'none' | 'clean' | 'ahead' | 'dirty' | 'noup'
+  ahead: number
+  dirty: number
+  branch: string
+}
+
 export type Water = {
   /** ms epoch the glass was last filled (0 = never seen) */
   lastDrink: number
@@ -23,6 +50,6 @@ export type Water = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number; water: Water }
+    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number; water: Water; share: Share; git: Git }
   }
 }

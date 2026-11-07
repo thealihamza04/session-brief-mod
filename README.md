@@ -21,6 +21,17 @@ A small glass icon sits at the start of the right column's first row and drains 
 
 The glass images are embedded in `hooks/register.tsx` as small PNGs. They were supplied by the mod's author; check the icons' licenses before redistributing or swap in your own.
 
+## Share your progress (desktop app and editor)
+
+A megaphone icon sits at the start of the right column's second row, with a number when you have updates you haven't shared. It is tinted by how many are waiting (none, a few, several, many). Hover it for the share card:
+
+- **LinkedIn and X rows:** each shows `up to date` or `N new`. **Draft post** asks the model to write a post from your unshared updates (a plain template if the model is unavailable), copies it, and shows an **Open ↗** link to the platform's compose page, prefilled where the platform allows. Nothing posts until you do. Press **Posted** once you have, and that platform counts as up to date.
+- **GitHub row:** whether your code is pushed (`pushed`, `N commits not pushed`, `N files not committed`, or `no upstream`), read from `git status`. Hidden outside a git repo.
+- **Per project:** the update log and what you have shared are kept per project folder, so work across sessions on one project counts together.
+- **Nudge:** a toast at 3 unshared updates, and again every 3 more.
+
+Every `set_brief` call logs its newest "done" line as an update, so keep those lines specific and free of private details; drafts are AI-written from them and you review before posting. The terminal has no images or floating cards, so there the updates are still logged and the nudge still fires, but the megaphone is not drawn. The platform logos and megaphone are embedded PNGs supplied by the mod's author; check their licenses before redistributing.
+
 ## Install
 
 At the prompt of a terminal `claude` session:
@@ -44,7 +55,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 73 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 105 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .
