@@ -666,8 +666,9 @@ export const register: Register = on => {
     ]
 
     // Working period: when you began (breaks inside it do not reset it), and active vs break time.
-    const per = await read($, period)
-    const se = await read($, sess)
+    // State held across a reload can come from an older version (no `runs` yet): re-validate it.
+    const per = asMeter(await read($, period))
+    const se = asMeter(await read($, sess))
     const periodStart = Math.min(num(per.startedAt) || startedAt, now)
     const timeRows: [string, string, string][] = [
       ['Now', isIdle ? `idle ${fmt(now - lastActive)}` : `${fmt(now - startedAt)} focused`, isIdle ? 'warning' : 'suggestion'],

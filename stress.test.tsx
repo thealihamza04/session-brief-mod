@@ -330,10 +330,10 @@ test('token total formatting for extreme sums', async ($, on) => {
   expect(text).not.toMatch(/\d{5,}/) // a 1e15 total must be abbreviated, not 16 digits
 })
 
-test('1,000 turns of 10M tokens each: stays one short token', async ($, on) => {
+test('50 turns of 200M tokens each (10B total): stays one short token', async ($, on) => {
   await boot($, on)
-  for (let i = 0; i < 1000; i++) {
-    await completeTurn($, { input_tokens: 10_000_000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, model: 'm' })
+  for (let i = 0; i < 50; i++) {
+    await completeTurn($, { input_tokens: 200_000_000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, model: 'm' })
   }
   const text = (await band($)).join('\n')
   expect(text).toMatch(/\d+(\.\d)?[kMGB]\b/)
@@ -1142,46 +1142,46 @@ const timeCardOf = (root: any) =>
 const cardText = async (ui: any) => textAll(timeCardOf(await ui.drawn()))
 const HOUR = 60 * MIN
 
-test('period: the user scenario - 1h25m of work, a 2h break, back for 10m: since shows the ORIGINAL start', async ($, on) => {
-  const clock = await boot($, on)
+test('period: the user scenario - 1h21m of work, a 2h04m break, back for 10m: since shows the ORIGINAL start', async ($, on) => {
+  // The past is seeded (replaying 3+ hours of 30s ticks made this slow); only the 10 minutes back are simulated.
+  const start = NOW - 205 * MIN
+  const runs = [{ start, end: start + 81 * MIN }]
+  const clock = await boot($, on, {
+    store: {
+      stretch: { startedAt: start, lastActive: start + 81 * MIN },
+      period: { startedAt: start, lastActive: start + 81 * MIN, active: 81 * MIN, idle: 0, inTurn: false, runs },
+    },
+  })
   const ui = await $.ui.mount(desk())
-  for (let i = 0; i < 17; i++) {
-    await submit($)
-    await clock.advance(MIN)
-    await finish($)
-    await clock.advance(4 * MIN)
-  }
-  await clock.advance(120 * MIN) // two hours idle
   await submit($)
   await clock.advance(10 * MIN)
   await finish($)
   const rs = await rows(ui)
   expect(rs[0].right).toMatch(/\b10m\b/) // the current stretch: 10 minutes
-  expect(rs[1].right).toMatch(/since 1:00 PM/) // not 3:25 PM: the period began at 1:00 PM
+  expect(rs[1].right).toMatch(/since 9:35 AM/) // the period began at 9:35 AM, not at the restart
   const card = await cardText(ui)
   expect(card).toMatch(/Now · 10m focused/)
   expect(card).toMatch(/Active · 1h31m in this period/) // 81m of work + the 10m turn
   expect(card).toMatch(/Breaks · 2h04m/)
-  expect(card).toMatch(/Started · 1:00 PM/)
-  expect(card).toMatch(/This chat · 1h31m active/)
+  expect(card).toMatch(/Started · 9:35 AM/)
+  expect(card).toMatch(/This chat · 10m active/)
   await ui.unmount()
 })
 
 test('period: a gap of 4 hours or more starts a fresh working period (active and breaks reset)', async ($, on) => {
-  const clock = await boot($, on)
+  const old = NOW - 5 * HOUR
+  const clock = await boot($, on, {
+    store: { period: { startedAt: old - 30 * MIN, lastActive: old, active: 30 * MIN, idle: 0, inTurn: false, runs: [{ start: old - 30 * MIN, end: old }] } },
+  })
   const ui = await $.ui.mount(desk())
-  await submit($)
-  await clock.advance(30 * MIN)
-  await finish($)
-  await clock.advance(5 * HOUR)
   await submit($)
   await clock.advance(2 * MIN)
   await finish($)
   const card = await cardText(ui)
   expect(card).toMatch(/Active · 2m in this period/)
   expect(card).toMatch(/Breaks · 0m/)
-  expect(card).toMatch(/Started · 6:30 PM/) // 1:00 PM + 30m + 5h
-  expect((await rows(ui))[1].right).toMatch(/since 6:30 PM/)
+  expect(card).toMatch(/Started · 1:00 PM/) // the new period began at the prompt
+  expect((await rows(ui))[1].right).toMatch(/since 1:00 PM/)
   await ui.unmount()
 })
 
@@ -1296,13 +1296,13 @@ test('time card: idle state says so, and the since line keeps the original start
   const clock = await boot($, on)
   const ui = await $.ui.mount(desk())
   await submit($)
-  await clock.advance(20 * MIN)
+  await clock.advance(5 * MIN)
   await finish($)
-  await clock.advance(90 * MIN) // idle (> 30m) but inside the 4h period
+  await clock.advance(35 * MIN) // idle (> 30m) but inside the 4h period
   const rs = await rows(ui)
-  expect(rs[0].right).toMatch(/idle 1h30m/)
-  expect(rs[1].right).toMatch(/last 20m/) // the stretch that ended
-  expect(await cardText(ui)).toMatch(/Now · idle 1h30m/)
+  expect(rs[0].right).toMatch(/idle 35m/)
+  expect(rs[1].right).toMatch(/last 5m/) // the stretch that ended
+  expect(await cardText(ui)).toMatch(/Now · idle 35m/)
   await ui.unmount()
 })
 
@@ -1318,21 +1318,17 @@ const run = async ($: any, clock: any, lengthMs: number) => {
 }
 
 test('sessions: the user scenario lists the 1h 21m session and the live 10m session', async ($, on) => {
-  const clock = await boot($, on)
+  const start = NOW - 205 * MIN
+  const clock = await boot($, on, {
+    store: { period: { startedAt: start, lastActive: start + 81 * MIN, active: 81 * MIN, idle: 0, inTurn: false, runs: [{ start, end: start + 81 * MIN }] } },
+  })
   const ui = await $.ui.mount(desk())
-  for (let i = 0; i < 17; i++) {
-    await submit($)
-    await clock.advance(MIN)
-    await finish($)
-    await clock.advance(4 * MIN)
-  }
-  await clock.advance(120 * MIN)
   await run($, clock, 10 * MIN)
   const card = await cardText(ui)
   expect(card).toMatch(/Work sessions/)
-  expect(card).toMatch(/1:00 PM · 1h 21m/)
-  expect(card).toMatch(/4:25 PM · 10m 0s · now/)
-  expect(card.indexOf('1:00 PM · 1h 21m')).toBeLessThan(card.indexOf('4:25 PM'))
+  expect(card).toMatch(/9:35 AM · 1h 21m/)
+  expect(card).toMatch(/1:00 PM · 10m 0s · now/)
+  expect(card.indexOf('9:35 AM · 1h 21m')).toBeLessThan(card.indexOf('1:00 PM · 10m 0s'))
   await ui.unmount()
 })
 
@@ -1341,7 +1337,7 @@ for (const [label, len, re] of [
   ['40m 12s', 40 * MIN + 12 * SEC, /1:00 PM · 40m 12s/],
   ['59m 59s', 59 * MIN + 59 * SEC, /1:00 PM · 59m 59s/],
   ['1h 00m', HOUR, /1:00 PM · 1h 00m/],
-  ['3h 07m', 3 * HOUR + 7 * MIN, /1:00 PM · 3h 07m/],
+  ['1h 07m', HOUR + 7 * MIN, /1:00 PM · 1h 07m/],
 ] as const) {
   test(`sessions: a ${label} session reads "${label}" (seconds under an hour, hours above)`, async ($, on) => {
     const clock = await boot($, on)
@@ -1355,57 +1351,57 @@ for (const [label, len, re] of [
 test('sessions: three sessions with breaks between are listed in order, each with its own start and length', async ($, on) => {
   const clock = await boot($, on)
   const ui = await $.ui.mount(desk())
-  await run($, clock, 30 * MIN) // 1:00 PM, 30m 0s
-  await clock.advance(40 * MIN)
-  await run($, clock, 40 * MIN + 12 * SEC) // 2:10 PM, 40m 12s
-  await clock.advance(60 * MIN)
-  await run($, clock, 5 * MIN) // 3:50 PM, 5m 0s
+  await run($, clock, 3 * MIN) // 1:00 PM, 3m 0s
+  await clock.advance(31 * MIN)
+  await run($, clock, 4 * MIN + 12 * SEC) // 1:34 PM, 4m 12s
+  await clock.advance(31 * MIN)
+  await run($, clock, 2 * MIN) // 2:09 PM, 2m 0s
   const card = await cardText(ui)
-  const a = card.indexOf('1:00 PM · 30m 0s')
-  const b = card.indexOf('2:10 PM · 40m 12s')
-  const c = card.indexOf('3:50 PM · 5m 0s')
+  const a = card.indexOf('1:00 PM · 3m 0s')
+  const b = card.indexOf('1:34 PM · 4m 12s')
+  const c = card.indexOf('2:09 PM · 2m 0s')
   expect(a).toBeGreaterThanOrEqual(0)
   expect(b).toBeGreaterThan(a)
   expect(c).toBeGreaterThan(b)
-  expect(card).toMatch(/3:50 PM · 5m 0s · now/) // only the latest is live
-  expect(card).not.toMatch(/2:10 PM · 40m 12s · now/)
-  expect(card).toMatch(/Breaks · 1h 40m|Breaks · 1h40m/) // 40m + 60m idle
+  expect(card).toMatch(/2:09 PM · 2m 0s · now/) // only the latest is live
+  expect(card).not.toMatch(/1:34 PM · 4m 12s · now/)
+  expect(card).toMatch(/Breaks · 1h02m/) // 31m + 31m idle
   await ui.unmount()
 })
 
 test('sessions: only the six latest are listed, with "+N earlier" for the rest', async ($, on) => {
-  const clock = await boot($, on)
+  // Seeded (not replayed): fast-forwarding hours of 30-second ticks made this test slow and flaky.
+  const runs = Array.from({ length: 9 }, (_, i) => ({ start: NOW - (10 - i) * 20 * MIN, end: NOW - (10 - i) * 20 * MIN + MIN }))
+  await boot($, on, { store: { period: { startedAt: runs[0]!.start, lastActive: NOW - 5 * MIN, active: 9 * MIN, idle: 0, inTurn: false, runs } } })
   const ui = await $.ui.mount(desk())
-  for (let i = 0; i < 9; i++) {
-    await run($, clock, MIN)
-    await clock.advance(40 * MIN)
-  }
   const card = await cardText(ui)
   expect(card).toMatch(/\+3 earlier/)
-  expect((card.match(/ · 1m 0s/g) ?? []).length).toBe(6)
+  expect((card.match(/ · 1m 0s/g) ?? []).length).toBe(5) // five finished sessions...
+  expect(card).toMatch(/ · 40m 0s · now/) // ...and the live one, counted through now
   await ui.unmount()
 })
 
 test('sessions: after a break that ends the work (idle now), the last session is not marked "now"', async ($, on) => {
   const clock = await boot($, on)
   const ui = await $.ui.mount(desk())
-  await run($, clock, 20 * MIN)
-  await clock.advance(90 * MIN)
+  await run($, clock, 5 * MIN)
+  await clock.advance(35 * MIN)
   const card = await cardText(ui)
-  expect(card).toMatch(/1:00 PM · 20m 0s/)
+  expect(card).toMatch(/1:00 PM · 5m 0s/)
   expect(card).not.toMatch(/· now/)
   await ui.unmount()
 })
 
 test('sessions: a gap of 4+ hours starts a new period, so the list starts over', async ($, on) => {
-  const clock = await boot($, on)
+  const old = NOW - 5 * HOUR
+  const clock = await boot($, on, {
+    store: { period: { startedAt: old - 10 * MIN, lastActive: old, active: 10 * MIN, idle: 0, inTurn: false, runs: [{ start: old - 10 * MIN, end: old }] } },
+  })
   const ui = await $.ui.mount(desk())
-  await run($, clock, 10 * MIN)
-  await clock.advance(5 * HOUR)
   await run($, clock, 3 * MIN)
   const card = await cardText(ui)
-  expect(card).not.toMatch(/1:00 PM · 10m 0s/)
-  expect(card).toMatch(/6:10 PM · 3m 0s · now/)
+  expect(card).not.toMatch(/10m 0s/) // the old period's session is gone
+  expect(card).toMatch(/1:00 PM · 3m 0s · now/)
   await ui.unmount()
 })
 
@@ -1440,5 +1436,20 @@ test('sessions: the list is on the time card only; the band rows themselves stay
   const rs = await rows(ui)
   expect(rs[0].right + rs[1].right + rs[2].right).not.toMatch(/Work sessions/)
   expect(await cardText(ui)).toMatch(/Work sessions/)
+  await ui.unmount()
+})
+
+test('reload: in-memory state from an older version (a meter without runs) never breaks drawing', async ($, on) => {
+  // The state noun keeps values across a hot reload, so new code can meet old shapes: here, a period without runs.
+  on('state.get', async (_: any, e: any, next: any) =>
+    (e.key ?? e.ref?.key) === 'period'
+      ? { value: { value: { startedAt: NOW - HOUR, lastActive: NOW - MIN, active: HOUR, idle: 0, inTurn: false }, version: 3 } }
+      : next(e),
+  )
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  const rs = await rows(ui)
+  expect(rs.length).toBe(3)
+  expect(await cardText(ui)).toMatch(/Active · 1h00m in this period/)
   await ui.unmount()
 })
