@@ -17,7 +17,7 @@ Each line is color-coded with the terminal theme's own colors: `◎` purpose (bl
 
 ## Water glass
 
-A small glass glyph (`▁▂▃▄▅▆▇█`) sits at the start of the right column's first row. It drains over 45 minutes (blue, then amber, then red). When it is empty it shows a red `drink water` chip, and while you are actively working it shows a toast once, then again every 15 minutes if you still have not refilled. **Click the glass** to refill it; the level is shared by all your sessions. No nagging while you are away (30+ minutes without activity). Change `DRAIN_MS` in `hooks/register.tsx` to drain faster or slower.
+A small glass icon sits at the start of the right column's first row and drains over 45 minutes: `▕█▏` full, `▕▆▏`, `▕▄▏` half, `▕▂▏`, `▕ ▏` empty (blue, then amber, then red). Hover it for a card with the level, the time left and a refill hint. **Click the glass** to refill it; the level is shared by all your sessions. When it is empty you get a toast once, then again every 15 minutes while you keep working, and none while you are away (30+ minutes without activity). Change `DRAIN_MS` in `hooks/register.tsx` to drain faster or slower.
 
 ## Install
 
@@ -42,7 +42,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 62 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 64 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

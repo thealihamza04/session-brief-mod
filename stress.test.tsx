@@ -48,7 +48,7 @@ async function boot($: any, on: any, o: Boot = {}) {
   return clock
 }
 
-type Row = { left: string; right: string; reveal: string | null }
+type Row = { left: string; right: string; reveal: string | null; tip: string }
 
 // Terminal cells a string occupies (wide CJK/emoji = 2, combining/ZWJ = 0).
 const cells = (str: string) => {
@@ -65,8 +65,12 @@ const cells = (str: string) => {
   return w
 }
 
+// Visible text only: a hover card (Box display:none) is not on screen until hovered.
 const textOf = (n: any): string =>
-  typeof n === 'string' ? n : (n?.children ?? []).map(textOf).join('')
+  typeof n === 'string' ? n : n?.props?.display === 'none' ? '' : (n?.children ?? []).map(textOf).join('')
+const textAll = (n: any): string => (typeof n === 'string' ? n : (n?.children ?? []).map(textAll).join(''))
+const hiddenText = (n: any): string =>
+  typeof n === 'string' ? '' : n?.props?.display === 'none' ? textAll(n) : (n?.children ?? []).map(hiddenText).join('')
 
 // The drawn band as rows: each brief line is a keyed Box of [Box[left Text, right Text], hover-reveal Box?].
 async function rows(ui: any): Promise<Row[]> {
@@ -79,7 +83,8 @@ async function rows(ui: any): Promise<Row[]> {
       out.push({
         left: textOf(inner.children[0]),
         right: textOf(inner.children[1]),
-        reveal: reveal ? textOf(reveal) : null,
+        reveal: reveal ? textAll(reveal) : null,
+        tip: hiddenText(inner.children[1]),
       })
     }
   }
@@ -299,7 +304,7 @@ test('happy path: renders the brief, work time, since (AM/PM), app uptime and to
   await completeTurn($, { input_tokens: 100_000, output_tokens: 84_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 5_000_000, model: 'm' })
   const rs = await band($, 80)
   expect(rs.length).toBe(3)
-  expect(rs[0]).toMatch(/^◎ Ship the thing\s+█\s+\d+m\s+work$/)
+  expect(rs[0]).toMatch(/^◎ Ship the thing\s+▕█▏\s+\d+m\s+work$/)
   expect(rs[1]).toMatch(/^✓ Did A\s+◷ since \d{1,2}:\d{2} (AM|PM)$/)
   expect(rs[2]).toMatch(/^✓ Did B\s+▣ 1h07m app · ◆ 184k$/) // cache reads excluded
 })
@@ -370,10 +375,11 @@ for (const surface of ['desktop', 'vscode'] as const) {
     expect(svg.props.source).not.toMatch(/<tags>/)
     expect(svg.props.alt).toContain('Purpose with') // full text for screen readers
     // placed absolutely, so it adds no height to the band
-    const boxes = findAllType(root, 'Box').filter((b: any) => b.props?.position === 'absolute')
-    expect(boxes.length).toBe(1)
-    // and no terminal-style hover reveal Box is drawn alongside
-    expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(0)
+    const abs = findAllType(root, 'Box').filter((b: any) => b.props?.position === 'absolute')
+    expect(abs.filter((b: any) => findAllType(b, 'Svg').length === 1).length).toBe(1) // the tooltip overlay
+    expect(abs.length).toBe(2) // + the water glass's hover card
+    // no terminal-style in-flow reveal Box beside the line: the only hidden Box is the water card
+    expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(1)
     await ui.unmount()
   })
 }
@@ -392,14 +398,14 @@ test('terminal still uses the in-band hover reveal (no Svg exists there)', async
   const ui = await $.ui.mount(BAND(40))
   const root = await ui.drawn()
   expect(findAllType(root, 'Svg').length).toBe(0)
-  expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(1)
+  expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(2) // the line's in-band reveal + the water glass's hover card
   await ui.unmount()
 })
 
 // ---------- water glass ----------
 
 const MIN = 60_000
-const glassOf = (r: Row) => r.right.trim()[0]
+const glassOf = (r: Row) => r.right.match(/▕(.)▏/)?.[1]
 
 test('water: starts full', async ($, on) => {
   await boot($, on)
@@ -414,10 +420,10 @@ test('water: drains over time, never refills by itself', async ($, on) => {
     await clock.advance(m * MIN)
     seen.push(glassOf((await rows(ui))[0]))
   }
-  const order = '▁▂▃▄▅▆▇█'
+  const order = ' ▂▄▆█'
   for (let i = 1; i < seen.length; i++) expect(order.indexOf(seen[i]!)).toBeLessThanOrEqual(order.indexOf(seen[i - 1]!))
   expect(seen[0]).toBe('█')
-  expect(seen.at(-1)).toBe('▁') // 48 minutes: empty
+  expect(seen.at(-1)).toBe(' ') // 48 minutes: empty glass
   await ui.unmount()
 })
 
@@ -430,7 +436,8 @@ test('water: empty glass shows the drink-water chip and nags once while you work
   expect(toasts.filter(t => /water/i.test(t)).length).toBe(0)
   await clock.advance(6 * MIN) // 46 minutes: empty
   const r = (await rows(ui))[0]
-  expect(r.right).toMatch(/drink water/)
+  expect(glassOf(r)).toBe(' ')
+  expect(r.tip).toMatch(/empty|drink/i)
   expect(toasts.filter(t => /water/i.test(t)).length).toBe(1)
   await clock.advance(5 * MIN) // still empty: no second nag yet (every 15 min)
   expect(toasts.filter(t => /water/i.test(t)).length).toBe(1)
@@ -441,25 +448,25 @@ test('water: no nag while you are away (no activity for 30+ minutes)', async ($,
   const clock = await boot($, on)
   await clock.advance(120 * MIN)
   expect(toasts.filter(t => /water/i.test(t)).length).toBe(0)
-  expect((await bandRows($, 100))[0].right).toMatch(/drink water/) // still drawn empty
+  expect(glassOf((await bandRows($, 100))[0])).toBe(' ') // still drawn empty
 })
 
 test('water: pressing the glass refills it', async ($, on) => {
   const clock = await boot($, on)
   const ui = await $.ui.mount(BAND(100))
   await clock.advance(50 * MIN)
-  expect((await rows(ui))[0].right).toMatch(/drink water/)
+  expect(glassOf((await rows(ui))[0])).toBe(' ')
   await ui.press({ key: 'water' })
   const r = (await rows(ui))[0]
   expect(glassOf(r)).toBe('█')
-  expect(r.right).not.toMatch(/drink water/)
+  expect(r.tip).toMatch(/100%/)
   expect(toasts.some(t => /refilled/i.test(t))).toBe(true)
   await ui.unmount()
 })
 
 test('water: a refill survives a restart (stored)', async ($, on) => {
   await boot($, on, { store: { water: { lastDrink: NOW - 50 * MIN } } })
-  expect((await bandRows($, 100))[0].right).toMatch(/drink water/) // empty since 5 minutes ago
+  expect(glassOf((await bandRows($, 100))[0])).toBe(' ') // empty since 5 minutes ago
 })
 
 for (const [name, w] of [
@@ -473,7 +480,7 @@ for (const [name, w] of [
     await boot($, on, { store: { water: w as any } })
     const r = (await bandRows($, 100))[0]
     expect(glassOf(r)).toBe('█')
-    expect(r.right).not.toMatch(/NaN|undefined|drink water/)
+    expect(r.right + r.tip).not.toMatch(/NaN|undefined/)
   })
 }
 
@@ -484,4 +491,29 @@ test('water: the glass shows on the right column in every surface', async ($, on
     expect(findAllType(await ui.drawn(), 'Button').length).toBe(1)
     await ui.unmount()
   }
+})
+
+test('water: hover card carries the level, time left and the refill hint; nothing extra shows at rest', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(BAND(100))
+  let r = (await rows(ui))[0]
+  expect(r.tip).toMatch(/Water 100% · empty in 45m · click the glass to refill/)
+  expect(r.right).not.toMatch(/Water|click/) // at rest only the icon shows
+  await clock.advance(23 * MIN)
+  r = (await rows(ui))[0]
+  expect(r.tip).toMatch(/Water (4\d|5\d)% · empty in \d+m/)
+  expect(glassOf(r)).toBe('▄')
+  await ui.unmount()
+})
+
+test('water: the five icons are all reachable and never wider than 3 cells', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(BAND(100))
+  const seen = new Set<string>()
+  for (let i = 0; i < 50; i++) {
+    seen.add(glassOf((await rows(ui))[0])!)
+    await clock.advance(MIN)
+  }
+  expect([...seen].sort()).toEqual([' ', '▂', '▄', '▆', '█'].sort())
+  await ui.unmount()
 })

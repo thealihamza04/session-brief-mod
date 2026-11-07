@@ -64,8 +64,12 @@ const fill = (now: number, lastDrink: number) => {
   if (!lastDrink || !now) return 1
   return Math.max(0, Math.min(1, 1 - Math.max(0, now - lastDrink) / DRAIN_MS))
 }
-const LEVELS = '▁▂▃▄▅▆▇█'
-const glassGlyph = (f: number) => LEVELS[Math.max(0, Math.min(7, Math.round(f * 7)))] ?? '▁'
+// A glass drawn with block characters: ▕█▏ full, ▕▆▏, ▕▄▏, ▕▂▏, ▕ ▏ empty.
+const WATER = ['█', '▆', '▄', '▂', ' '] as const
+const glassIcon = (f: number) => {
+  const i = f <= 0 ? 4 : f > 0.87 ? 0 : f > 0.62 ? 1 : f > 0.37 ? 2 : 3
+  return `▕${WATER[i]}▏`
+}
 const glassColor = (f: number) => (f > 0.5 ? 'suggestion' : f > 0.2 ? 'warning' : 'error')
 
 // ps "etime" is [[dd-]hh:]mm:ss
@@ -340,10 +344,13 @@ export const register: Register = on => {
 
     // The water glass: drains over DRAIN_MS; pressing it refills.
     const level = fill(now, num((await read($, water)).lastDrink))
-    const glass: Seg = { t: `${glassGlyph(level)} `, c: glassColor(level), bold: true, press: 'water' }
-    const thirsty: Seg[] =
-      level <= 0 ? [{ t: ' drink water ', c: 'inverseText', bg: 'error', bold: true }, { t: ' ', c: 'subtle' }] : []
-
+    const glass: Seg = { t: glassIcon(level), c: glassColor(level), bold: true, press: 'water' }
+    const leftMin = Math.ceil((level * DRAIN_MS) / 60000)
+    const waterTip =
+      level <= 0
+        ? 'Water is empty: time to drink! Click the glass to refill.'
+        : `Water ${Math.round(level * 100)}% · empty in ${leftMin}m · click the glass to refill`
+    const gap: Seg = { t: ' ' }
     // A line is a list of styled runs; widths are measured on their plain text.
     type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' }
     const plain = (line: Seg[]) => line.map(x => x.t).join('')
@@ -360,15 +367,15 @@ export const register: Register = on => {
     ]
     const right: Seg[][] =
       startedAt === 0
-        ? [[glass, ...thirsty], [], []]
+        ? [[glass], [], []]
         : isIdle
           ? [
-              [glass, ...thirsty, { t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
+              [glass, gap, { t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
               [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }],
               appLine,
             ]
           : [
-              [glass, ...thirsty, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
+              [glass, gap, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
               [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: clockTime(startedAt), c: 'text' }],
               appLine,
             ]
@@ -399,11 +406,17 @@ export const register: Register = on => {
     const runs = (line: Seg[]) =>
       line.map(x =>
         x.press ? (
-          <Button key="water" plain label="Drink water: refill the glass" onPress={refill}>
-            <Text color={x.c} bold={x.bold}>
-              {x.t}
-            </Text>
-          </Button>
+          <Box key="glass">
+            <Button key="water" plain label="Water glass: click to refill" onPress={refill}>
+              <Text color={x.c} bold={x.bold}>
+                {x.t}
+              </Text>
+            </Button>
+            {/* Hover card: absolute (no reflow), left of the glass, hidden until the pointer is on it. */}
+            <Box position="absolute" top={0} right={cells(x.t)} display="none" hover={{ display: 'flex' }}>
+              <Text inverse>{` ${waterTip} `}</Text>
+            </Box>
+          </Box>
         ) : (
           <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
             {x.t}
