@@ -18,6 +18,6 @@ export type ChatTimer = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-brief': { brief: Brief; timer: ChatTimer }
+    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number }
   }
 }

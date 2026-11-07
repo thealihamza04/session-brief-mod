@@ -5,11 +5,11 @@ A Claude Code mod that draws three dim lines above the prompt:
 ```
 ◎ What this session is for                                   42m work
 ✓ Most recent thing done                                since 2:05 PM
-✓ Second most recent thing done                            25h29m app
+✓ Second most recent thing done                            25h29m app · 184k
 ```
 
 - **Left:** the session's purpose and the two latest results. Claude keeps them current by calling a `set_brief` tool at the end of each turn. They are saved per session, so reopening a session restores them.
-- **Right:** a compact timer, the same in every session: your current work stretch (resets after a 30-minute break), when it started, and how long the Claude desktop app has been running (read from the OS process list; falls back to when the mod was first seen).
+- **Right:** a compact timer, the same in every session: your current work stretch (resets after a 30-minute break), when it started, how long the Claude desktop app has been running (read from the OS process list; falls back to when the mod was first seen), and this session's token total (input + output + cache writes, cache reads excluded).
 
 ## Install
 

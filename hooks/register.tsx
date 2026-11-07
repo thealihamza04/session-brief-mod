@@ -44,6 +44,12 @@ const clockTime = (ms: number) => {
   return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
 }
 
+const tokens = atom({ plugin: 'session-brief', key: 'tokens' } as const, 0)
+
+// 1234 -> 1.2k, 184000 -> 184k, 1250000 -> 1.3M
+const compact = (n: number) =>
+  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n)
+
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s)
 
 const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question, or are waiting on the user), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), and done (exactly 2 strings, max 70 chars each: the two most recent things completed, newest first; a pending question may be the newest). Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
@@ -52,6 +58,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const id = await $.session.id()
     const saved = (await $.store.get(`brief:${id}`)) as Brief | undefined
+    const savedTokens = Number((await $.store.get(`tokens:${id}`)) ?? 0)
+    if (savedTokens > 0) await update($, tokens, () => savedTokens)
     if (saved && typeof saved.purpose === 'string' && Array.isArray(saved.done)) {
       await update($, brief, () => saved)
     }
@@ -136,11 +144,21 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
     const now = await $.clock.now()
     const stored = (await $.store.get('stretch')) as { startedAt: number; lastActive: number } | undefined
     await $.store.set('stretch', { startedAt: stored?.startedAt || now, lastActive: now })
     await update($, timer, t => ({ ...t, lastActive: now, now }))
-    return next(e)
+
+    // Tokens this turn, cache reads excluded (they would dwarf everything else).
+    const u = r.usage
+    if (u) {
+      const add = u.input_tokens + u.output_tokens + u.cache_creation_input_tokens
+      const total = (await read($, tokens)) + add
+      await update($, tokens, () => total)
+      await $.store.set(`tokens:${await $.session.id()}`, total)
+    }
+    return r
   })
 
   on('prompt.compose', async ($, e, next) => {
@@ -154,6 +172,7 @@ export const register: Register = on => {
 
     const b = await read($, brief)
     const t = await read($, timer)
+    const tok = await read($, tokens)
     const cols = Math.max(24, e.props.bodyColumns ?? 80)
     const { Box, Text } = $.ui.resolve(e)
 
@@ -163,8 +182,8 @@ export const register: Register = on => {
       t.startedAt === 0
         ? ['', '', '']
         : idle
-          ? [`idle ${fmt(t.now - t.lastActive)}`, `last ${fmt(t.lastActive - t.startedAt)}`, `${fmt(t.now - t.openedAt)} app`]
-          : [`${fmt(t.now - t.startedAt)} work`, `since ${clockTime(t.startedAt)}`, `${fmt(t.now - t.openedAt)} app`]
+          ? [`idle ${fmt(t.now - t.lastActive)}`, `last ${fmt(t.lastActive - t.startedAt)}`, `${fmt(t.now - t.openedAt)} app${tok > 0 ? ` · ${compact(tok)}` : ''}`]
+          : [`${fmt(t.now - t.startedAt)} work`, `since ${clockTime(t.startedAt)}`, `${fmt(t.now - t.openedAt)} app${tok > 0 ? ` · ${compact(tok)}` : ''}`]
     const left = [`◎ ${b.purpose}`, ...b.done.slice(0, 2).map(d => `✓ ${d}`)]
     const rw = Math.max(...right.map(r => r.length))
 
