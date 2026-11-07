@@ -31,3 +31,11 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 - A new session shows placeholder text until Claude's first `set_brief` call.
 - The work stretch is saved in the mod's store, so a new session continues it instead of starting at zero.
+
+## Tests
+
+`stress.test.tsx` holds 42 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+
+```bash
+claude plugin test .
+```
