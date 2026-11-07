@@ -1,0 +1,16 @@
+{
+  "name": "thealihamza04-mods",
+  "owner": {
+    "name": "Ali Hamza"
+  },
+  "plugins": [
+    {
+      "name": "session-brief",
+      "source": "./",
+      "description": "Session purpose + two recent results above the prompt, with a compact work timer."
+    }
+  ],
+  "metadata": {
+    "description": "Claude Code mods by Ali Hamza."
+  }
+}
