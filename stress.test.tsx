@@ -42,7 +42,7 @@ async function boot($: any, on: any, o: Boot = {}) {
   return clock
 }
 
-type Row = { left: string; right: string }
+type Row = { left: string; right: string; reveal: string | null }
 
 // Terminal cells a string occupies (wide CJK/emoji = 2, combining/ZWJ = 0).
 const cells = (str: string) => {
@@ -62,19 +62,24 @@ const cells = (str: string) => {
 const textOf = (n: any): string =>
   typeof n === 'string' ? n : (n?.children ?? []).map(textOf).join('')
 
-// The drawn band as rows: each brief line is a Box of [left Text, right Text].
+// The drawn band as rows: each brief line is a keyed Box of [Box[left Text, right Text], hover-reveal Box?].
 async function rows(ui: any): Promise<Row[]> {
   const root = await ui.drawn()
   const out: Row[] = []
   for (const c of root.children ?? []) {
-    if (c.type === 'Box' && (c.children ?? []).length === 2) {
-      out.push({ left: textOf(c.children[0]), right: textOf(c.children[1]) })
+    const inner = c.type === 'Box' ? (c.children ?? [])[0] : undefined
+    if (inner?.type === 'Box' && (inner.children ?? []).length === 2) {
+      const reveal = (c.children ?? [])[1]
+      out.push({
+        left: textOf(inner.children[0]),
+        right: textOf(inner.children[1]),
+        reveal: reveal ? textOf(reveal) : null,
+      })
     }
   }
   return out
 }
 
-// Returns the rows as display strings (left + gap + right), so assertions read like the screen.
 async function bandRows($: any, cols = 80, extra = {}): Promise<Row[]> {
   const ui = await $.ui.mount(BAND(cols, extra))
   const r = await rows(ui)
@@ -288,21 +293,48 @@ test('happy path: renders the brief, work time, since (AM/PM), app uptime and to
   await completeTurn($, { input_tokens: 100_000, output_tokens: 84_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 5_000_000, model: 'm' })
   const rs = await band($, 80)
   expect(rs.length).toBe(3)
-  expect(rs[0]).toMatch(/^◎ Ship the thing\s+\d+m work$/)
-  expect(rs[1]).toMatch(/^✓ Did A\s+since \d{1,2}:\d{2} (AM|PM)$/)
-  expect(rs[2]).toMatch(/^✓ Did B\s+1h07m app · 184k$/) // cache reads excluded
+  expect(rs[0]).toMatch(/^◎ Ship the thing\s+●\s+\d+m\s+work$/)
+  expect(rs[1]).toMatch(/^✓ Did A\s+◷ since \d{1,2}:\d{2} (AM|PM)$/)
+  expect(rs[2]).toMatch(/^✓ Did B\s+▣ 1h07m app · ◆ 184k$/) // cache reads excluded
 })
 
 test('happy path: idle after a 3-hour gap shows idle + last stretch', async ($, on) => {
   await boot($, on, { store: { stretch: { startedAt: NOW - 5 * 3_600_000, lastActive: NOW - 3 * 3_600_000 } } })
   const rs = await band($, 80)
-  expect(rs[0]).toMatch(/idle 3h00m/)
-  expect(rs[1]).toMatch(/last 2h00m/)
+  expect(rs[0]).toMatch(/⏸\s+idle 3h00m/)
+  expect(rs[1]).toMatch(/◷ last 2h00m/)
 })
 
 test('a turn finishing after a 3-hour gap starts a fresh stretch, not a 5-hour one', async ($, on) => {
   await boot($, on, { store: { stretch: { startedAt: NOW - 5 * 3_600_000, lastActive: NOW - 3 * 3_600_000 } } })
   await completeTurn($, { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, model: 'm' })
   const rs = await band($, 80)
-  expect(rs[0]).toMatch(/\b0m work/)
+  expect(rs[0]).toMatch(/\s0m\s+work/)
+})
+
+// ---------- hover: a cut line reveals in full ----------
+
+test('hover reveal: a clipped line carries its full text', async ($, on) => {
+  await boot($, on)
+  const purpose = 'A purpose line that is much longer than the room the band has on a narrow terminal'
+  await setBrief($, { purpose, done: ['short', 'tiny'] })
+  const rs = await bandRows($, 50)
+  expect(rs[0].left).toMatch(/…/)
+  expect(rs[0].reveal).toContain(purpose) // full, un-clipped
+  expect(rs[1].reveal).toBeNull() // nothing cut, nothing to reveal
+})
+
+test('hover reveal: when the right column is hidden, hovering shows it too', async ($, on) => {
+  await boot($, on, { ps: ' 01:07:00 /usr/lib/claude-desktop/claude-desktop\n' })
+  await setBrief($, { purpose: 'Short', done: ['a', 'b'] })
+  const rs = await bandRows($, 20)
+  expect(rs[0].right).toBe('')
+  expect(rs[0].reveal).toMatch(/Short/)
+  expect(rs[2].reveal).toMatch(/app/) // the app/token info was hidden, so the hover has it
+})
+
+test('hover reveal: a wide band needs none', async ($, on) => {
+  await boot($, on)
+  await setBrief($, { purpose: 'Short', done: ['a', 'b'] })
+  for (const r of await bandRows($, 120)) expect(r.reveal).toBeNull()
 })

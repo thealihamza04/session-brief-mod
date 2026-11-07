@@ -292,31 +292,81 @@ export const register: Register = on => {
     const startedAt = Math.min(num(t.startedAt), now)
     const lastActive = Math.min(num(t.lastActive), now)
     const openedAt = Math.min(num(t.openedAt), now)
-
-    // Right column, compact: work stretch / since / app (+ tokens).
-    const app = `${fmt(now - openedAt)} app${tok > 0 ? ` · ${compact(tok)}` : ''}`
     const isIdle = startedAt !== 0 && now - lastActive > BREAK_MS
-    const right =
+
+    // A line is a list of styled runs; widths are measured on their plain text.
+    type Seg = { t: string; c?: string; bg?: string; bold?: boolean }
+    const plain = (line: Seg[]) => line.map(x => x.t).join('')
+
+    const left: Seg[][] = [
+      [{ t: '◎ ', c: 'suggestion', bold: true }, { t: b.purpose, c: 'text', bold: true }],
+      ...b.done.map((d, i): Seg[] => [{ t: '✓ ', c: 'success', bold: true }, { t: d, c: i === 0 ? 'text' : 'subtle' }]),
+    ]
+
+    const appLine: Seg[] = [
+      { t: '▣ ', c: 'subtle' },
+      { t: `${fmt(now - openedAt)} app`, c: 'subtle' },
+      ...(tok > 0 ? [{ t: ' · ', c: 'subtle' }, { t: `◆ ${compact(tok)}`, c: 'merged', bold: true }] : []),
+    ]
+    const right: Seg[][] =
       startedAt === 0
-        ? ['', '', '']
+        ? [[], [], []]
         : isIdle
-          ? [`idle ${fmt(now - lastActive)}`, `last ${fmt(lastActive - startedAt)}`, app]
-          : [`${fmt(now - startedAt)} work`, `since ${clockTime(startedAt)}`, app]
-    const left = [`◎ ${b.purpose}`, ...b.done.map(d => `✓ ${d}`)]
+          ? [
+              [{ t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
+              [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }],
+              appLine,
+            ]
+          : [
+              [{ t: '● ', c: 'success' }, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
+              [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: clockTime(startedAt), c: 'text' }],
+              appLine,
+            ]
 
     // Fit the band: with little room the right column goes first, then the text is clipped.
-    const rw = Math.max(...right.map(cells))
+    const rw = Math.max(0, ...right.map(r => cells(plain(r))))
     const room = cols - rw - 2
     const hasRight = room >= 16
+    const avail = hasRight ? room : cols
+
+    // Clip the last run of a line (the text, after its icon) to the room that is left.
+    const fit = (line: Seg[], width: number): Seg[] => {
+      const head = line.slice(0, -1)
+      const last = line[line.length - 1]
+      if (!last) return line
+      // No room even for the icon: clip the whole line, in the icon's color.
+      if (cells(plain(head)) + 1 > width) return [{ t: clip(plain(line), width), c: head[0]?.c ?? last.c }]
+      return [...head, { ...last, t: clip(last.t, width - cells(plain(head))) }]
+    }
+    const runs = (line: Seg[]) =>
+      line.map(x => (
+        <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
+          {x.t}
+        </Text>
+      ))
 
     return (
       <Box flexDirection="column">
-        {left.map((l, i) => (
-          <Box key={String(i)} justifyContent="space-between">
-            <Text dimColor>{clip(l, hasRight ? room : cols)}</Text>
-            {hasRight ? <Text dimColor>{right[i] ?? ''}</Text> : <Text dimColor>{''}</Text>}
-          </Box>
-        ))}
+        {left.map((l, i) => {
+          const full = plain(l)
+          const isCut = cells(full) > avail
+          const hidden = !hasRight && plain(right[i] ?? []) !== ''
+          return (
+            <Box key={`row${i}`} flexDirection="column">
+              <Box justifyContent="space-between">
+                <Text>{runs(fit(l, avail))}</Text>
+                <Text>{hasRight ? runs(right[i] ?? []) : ''}</Text>
+              </Box>
+              {isCut || hidden ? (
+                <Box display="none" hover={{ display: 'flex' }}>
+                  <Text wrap="wrap" inverse>
+                    {`${full}${hidden ? `  ·  ${plain(right[i] ?? [])}` : ''}`}
+                  </Text>
+                </Box>
+              ) : null}
+            </Box>
+          )
+        })}
         {below}
       </Box>
     )
