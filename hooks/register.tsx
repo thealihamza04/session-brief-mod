@@ -27,6 +27,17 @@ const fmt = (ms: number) => {
   return h > 0 ? `${h}h${String(m % 60).padStart(2, '0')}m` : `${m}m`
 }
 
+// ps "etime" is [[dd-]hh:]mm:ss
+const etimeMs = (e: string) => {
+  const m = e.trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/)
+  if (!m) return null
+  const d = Number(m[1] ?? 0)
+  const h = Number(m[2] ?? 0)
+  const mi = Number(m[3] ?? 0)
+  const sec = Number(m[4] ?? 0)
+  return (((d * 24 + h) * 60 + mi) * 60 + sec) * 1000
+}
+
 const clockTime = (ms: number) => {
   const d = new Date(ms)
   const h = d.getHours()
@@ -45,10 +56,29 @@ export const register: Register = on => {
       await update($, brief, () => saved)
     }
     const now = await $.clock.now()
+    // The work stretch is shared by every session (kept in the plugin store).
+    const stretch = (await $.store.get('stretch')) as { startedAt: number; lastActive: number } | undefined
+    // "Open" = how long the Claude desktop app has been running, read from the OS.
+    let openedAt = 0
+    try {
+      const ps = await $.process.run(['ps', '-eo', 'etime=,args='])
+      const line = ps.stdout
+        .split('\n')
+        .find(l => /(\/claude-desktop|Claude\.app\/Contents\/MacOS\/Claude)(\s|$)/.test(l) && !l.includes('--type='))
+      const up = line ? etimeMs(line.trim().split(/\s+/)[0] ?? '') : null
+      if (up !== null) openedAt = now - up
+    } catch {
+      // no ps (e.g. Windows): fall back below
+    }
+    if (openedAt === 0) {
+      const seen = Number((await $.store.get('firstSeen')) ?? 0)
+      openedAt = seen || now
+      if (!seen) await $.store.set('firstSeen', now)
+    }
     await update($, timer, t => ({
-      openedAt: t.openedAt || now,
-      startedAt: t.startedAt || now,
-      lastActive: t.lastActive || now,
+      openedAt,
+      startedAt: stretch?.startedAt || t.startedAt || now,
+      lastActive: stretch?.lastActive || t.lastActive || now,
       now,
     }))
     $.clock.every(30000, async () => {
@@ -96,17 +126,19 @@ export const register: Register = on => {
   // Your activity: a prompt starts (or continues) the work stretch.
   on('prompt.submit', async ($, e, next) => {
     const now = await $.clock.now()
-    await update($, timer, t => ({
-      openedAt: t.openedAt || now,
-      startedAt: t.startedAt === 0 || now - t.lastActive > BREAK_MS ? now : t.startedAt,
-      lastActive: now,
-      now,
-    }))
+    const stored = (await $.store.get('stretch')) as { startedAt: number; lastActive: number } | undefined
+    const last = stored?.lastActive ?? 0
+    const started = stored?.startedAt ?? 0
+    const startedAt = started === 0 || now - last > BREAK_MS ? now : started
+    await $.store.set('stretch', { startedAt, lastActive: now })
+    await update($, timer, t => ({ ...t, startedAt, lastActive: now, now }))
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const now = await $.clock.now()
+    const stored = (await $.store.get('stretch')) as { startedAt: number; lastActive: number } | undefined
+    await $.store.set('stretch', { startedAt: stored?.startedAt || now, lastActive: now })
     await update($, timer, t => ({ ...t, lastActive: now, now }))
     return next(e)
   })
@@ -131,8 +163,8 @@ export const register: Register = on => {
       t.startedAt === 0
         ? ['', '', '']
         : idle
-          ? [`idle ${fmt(t.now - t.lastActive)}`, `last ${fmt(t.lastActive - t.startedAt)}`, `${fmt(t.now - t.openedAt)} open`]
-          : [`${fmt(t.now - t.startedAt)} work`, `since ${clockTime(t.startedAt)}`, `${fmt(t.now - t.openedAt)} open`]
+          ? [`idle ${fmt(t.now - t.lastActive)}`, `last ${fmt(t.lastActive - t.startedAt)}`, `${fmt(t.now - t.openedAt)} app`]
+          : [`${fmt(t.now - t.startedAt)} work`, `since ${clockTime(t.startedAt)}`, `${fmt(t.now - t.openedAt)} app`]
     const left = [`◎ ${b.purpose}`, ...b.done.slice(0, 2).map(d => `✓ ${d}`)]
     const rw = Math.max(...right.map(r => r.length))
 
