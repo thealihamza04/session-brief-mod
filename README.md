@@ -34,7 +34,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 42 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 43 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

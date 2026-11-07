@@ -252,9 +252,11 @@ export const register: Register = on => {
     const r = await next(e)
     await safely(async () => {
       const now = await $.clock.now()
+      // A turn finishing after a long gap (no prompt in between) starts a new stretch too.
       const stored = asStretch(await $.store.get('stretch'))
-      await $.store.set('stretch', { startedAt: stored?.startedAt || now, lastActive: now })
-      await update($, timer, t => ({ ...t, lastActive: now, now }))
+      const startedAt = !stored || now - stored.lastActive > BREAK_MS ? now : stored.startedAt
+      await $.store.set('stretch', { startedAt, lastActive: now })
+      await update($, timer, t => ({ ...t, startedAt, lastActive: now, now }))
 
       // Tokens this turn, cache reads excluded (they would dwarf everything else).
       const u = r.usage

@@ -299,3 +299,10 @@ test('happy path: idle after a 3-hour gap shows idle + last stretch', async ($, 
   expect(rs[0]).toMatch(/idle 3h00m/)
   expect(rs[1]).toMatch(/last 2h00m/)
 })
+
+test('a turn finishing after a 3-hour gap starts a fresh stretch, not a 5-hour one', async ($, on) => {
+  await boot($, on, { store: { stretch: { startedAt: NOW - 5 * 3_600_000, lastActive: NOW - 3 * 3_600_000 } } })
+  await completeTurn($, { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, model: 'm' })
+  const rs = await band($, 80)
+  expect(rs[0]).toMatch(/\b0m work/)
+})
