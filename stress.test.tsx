@@ -366,7 +366,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
     await setBrief($, { purpose, done: ['short', 'tiny'] })
     const ui = await $.ui.mount({ ...BAND(40), surface })
     const root = await ui.drawn()
-    const svgs = findAllType(root, 'Svg')
+    const svgs = findAllType(root, 'Svg').filter((v: any) => v.props.isInteractive) // the line tooltips (the glass icon is not interactive)
     expect(svgs.length).toBe(1) // only the cut line, not the two short ones
     const svg = svgs[0]
     expect(svg.props.isInteractive).toBe(true)
@@ -376,7 +376,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
     expect(svg.props.alt).toContain('Purpose with') // full text for screen readers
     // placed absolutely, so it adds no height to the band
     const abs = findAllType(root, 'Box').filter((b: any) => b.props?.position === 'absolute')
-    expect(abs.filter((b: any) => findAllType(b, 'Svg').length === 1).length).toBe(1) // the tooltip overlay
+    expect(abs.filter((b: any) => findAllType(b, 'Svg').length === 1 && !findAllType(b, 'Button').length).length).toBe(1) // the tooltip overlay
     expect(abs.length).toBe(2) // + the water glass's hover card
     // no terminal-style in-flow reveal Box beside the line: the only hidden Box is the water card
     expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(1)
@@ -388,7 +388,7 @@ test('desktop: a wide band draws no tooltip at all', async ($, on) => {
   await boot($, on)
   await setBrief($, { purpose: 'Short', done: ['a', 'b'] })
   const ui = await $.ui.mount({ ...BAND(120), surface: 'desktop' })
-  expect(findAllType(await ui.drawn(), 'Svg').length).toBe(0)
+  expect(findAllType(await ui.drawn(), 'Svg').filter((v: any) => v.props.isInteractive).length).toBe(0) // no tooltip; only the (non-interactive) glass icon
   await ui.unmount()
 })
 
@@ -497,7 +497,7 @@ test('water: hover card carries the level, time left and the refill hint; nothin
   const clock = await boot($, on)
   const ui = await $.ui.mount(BAND(100))
   let r = (await rows(ui))[0]
-  expect(r.tip).toMatch(/Water 100% · empty in 45m · click the glass to refill/)
+  expect(r.tip).toMatch(/Water 100% · empty in 45m · click the glass to refill/) // terminal wording
   expect(r.right).not.toMatch(/Water|click/) // at rest only the icon shows
   await clock.advance(23 * MIN)
   r = (await rows(ui))[0]
@@ -517,3 +517,45 @@ test('water: the five icons are all reachable and never wider than 3 cells', asy
   expect([...seen].sort()).toEqual([' ', '▂', '▄', '▆', '█'].sort())
   await ui.unmount()
 })
+
+// ---------- water glass images on desktop / editor ----------
+
+const iconOf = (root: any) => findAllType(root, 'Svg').find((v: any) => !v.props.isInteractive)
+
+for (const surface of ['desktop', 'vscode'] as const) {
+  test(`${surface}: the glass is an image (five distinct icons: full -> empty), not text`, async ($, on) => {
+    const clock = await boot($, on)
+    const ui = await $.ui.mount({ ...BAND(100), surface })
+    const sources: string[] = []
+    for (let i = 0; i < 50; i++) {
+      const icon = iconOf(await ui.drawn())
+      expect(icon).toBeTruthy()
+      expect(icon.props.source).toMatch(/data:image\/png;base64,/)
+      expect(icon.props.alt).toMatch(/Water glass, \d+% full/)
+      expect(icon.props.isInteractive).toBeFalsy()
+      sources.push(icon.props.source)
+      await clock.advance(MIN)
+    }
+    expect(new Set(sources).size).toBe(5)
+    expect(sources[0]).not.toBe(sources.at(-1))
+    // no label text leaks onto the band at rest (the old "Water glass: click to refill" bug)
+    const visible = textOf(await ui.drawn())
+    expect(visible).not.toMatch(/Water glass|click to refill|Refill/)
+    await ui.unmount()
+  })
+
+  test(`${surface}: the hover card has the info and a Refill button that refills`, async ($, on) => {
+    const clock = await boot($, on)
+    const ui = await $.ui.mount({ ...BAND(100), surface })
+    await clock.advance(50 * MIN) // empty
+    const before = iconOf(await ui.drawn()).props.source
+    const card = findAllType(await ui.drawn(), 'Box').find((b: any) => b.props?.display === 'none' && findAllType(b, 'Button').length)
+    expect(card).toBeTruthy()
+    expect(textAll(card)).toMatch(/Water is empty/)
+    await ui.press({ key: 'water' })
+    const after = iconOf(await ui.drawn()).props.source
+    expect(after).not.toBe(before) // back to the full glass
+    expect(toasts.some(t => /refilled/i.test(t))).toBe(true)
+    await ui.unmount()
+  })
+}

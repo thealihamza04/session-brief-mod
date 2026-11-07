@@ -64,12 +64,17 @@ const fill = (now: number, lastDrink: number) => {
   if (!lastDrink || !now) return 1
   return Math.max(0, Math.min(1, 1 - Math.max(0, now - lastDrink) / DRAIN_MS))
 }
-// A glass drawn with block characters: ▕█▏ full, ▕▆▏, ▕▄▏, ▕▂▏, ▕ ▏ empty.
+// Water level -> icon index: 0 full, 1 three quarters, 2 half, 3 low, 4 empty.
+const glassIndex = (f: number) => (f <= 0 ? 4 : f > 0.87 ? 0 : f > 0.62 ? 1 : f > 0.37 ? 2 : 3)
+
+// Terminal fallback (no images there): a glass drawn with block characters, ▕█▏ full to ▕ ▏ empty.
 const WATER = ['█', '▆', '▄', '▂', ' '] as const
-const glassIcon = (f: number) => {
-  const i = f <= 0 ? 4 : f > 0.87 ? 0 : f > 0.62 ? 1 : f > 0.37 ? 2 : 3
-  return `▕${WATER[i]}▏`
-}
+const glassIcon = (f: number) => `▕${WATER[glassIndex(f)]}▏`
+
+// Desktop / editor icons: 44px PNGs (full, 3/4, 1/2, 1/4, empty), drawn at 22px.
+const GLASS_PNG = ["data:image/png;base64,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", "data:image/png;base64,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", "data:image/png;base64,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", "data:image/png;base64,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", "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAAFN0lEQVR42u1YT4gTZxT/vW/+JlndFY27uFtPPTkUCgpe91AoLSoUTCilB63QFMEiLQVvm73XqqALoY3CQhcce6i20OPutdRrpEWhZTdL9p+7STabTPLNzOthknQCBTOa9GD3wRAS3p9f3rzv/d77gH3Zl335T4WiKKdsWzlRSDGQHVD4LJ5YD+hBOu39vzM8MzMjZmdn/bm8fdWMxc80GnsKAOUVY3uxWMJzGrWfL1/68GYnxouM1Ih/72PDNE46jfoeCIKZ6aWyRMRg+IZpJBynPgbgZr+2fQG2LCsAxni2V6u9rWp4ixvmupSO0DTTjwJWSkeomulTzBnfq9WegvGsJ8YgABeSSQIAJi7F4jGlvusZmcy5+qvUQ+7eD0b8QEypVlulcIwXiYj0KpmKmqZDejzJzLS4uKgyM0V5OjbS40lN00FMxSgY+gO81NVeJRIAeIKIeGkpqMcoT8cm8CEAxmpPjEEAtqxNBgD2UfJ9H0SYBABMv0QtTHcOHiZ93wcTSuEYAwFcKKQCZ6q3IWULRDz1yv2UeErKFqB6Gz0xBgE4mwUDgGzxttOog0FTAGBt9peVnrfVtmHQlNOoQ7Z4OxxjsIeuPlaW0q0BQUkUCoXIgEM2k1K2alQfKw+VGufu2k/n8vZyiCWjkEfXZi5vL8/dtZ9Gjd93hmdmZgQAMHMJxEfn5+fj7e99B+vozs/Px0F8lJlLYd+DLgnRptWibpjGjkOHgtrL9p3hju6OQ4d0wzSIuj14CICnp9tZQtE0Y9CV+GEAeNInpYZ1dSV+2DRjYEYx7Hvghy4oQi6qqgaf/XEASEWZp9ufvuKPq6oGAheHVsNYalORUFaJCAw+Fpz6JPXfIdozicvHiAgQymqP70ECtiyLgwy7a77nvRzbhVnO80Bw18K+Bwq40z9dyZutVhNEmIoyA4R1iTDVajXhSt6M2s9FhBPOAKCzv91o1JkR0HO/M0DPTAKeajTqrLO/HfY9UMDUrdRaxfO8SpvtKJVK9T3Ah3QnAx+1Sq/vgXYJYgCUyWQkEa0x8wTQ5X/qq8H8QyATBFrLZDIy+J14KG0ttMMVDd1I3srnk0TEudzjF24uudxjlYj4Vj6fNHQjCQp6cNS9MNISms1mBQCfGcuJkQOqV/EXbty4l8pkTpUBwLZtpVBIUrdzLAV1m06nvUzmlMzl7FFf0EJi5KC6s/18OexzKIAxPQ3MzgKMjabjIJ5IvENEv819Z3+peDu/pNNpCQCY7TVbXFxU//hz/T0I5ZtEIvFm02kAjI0en0MB3CkNgVVVVVGtlh8Jobx7ZPzow+dbtHLnrv0rfH9dCOEFr5oI4PHf/9o6fTg5cfz51mazWq38NHpw9CyL9moUUaIB7jISrRimCeyKBSn5arm884UgcU7X1fOabvSu9a0mpJQr1Ur5NuBeJ1JOG6Z5Fru7K1FZLjLgLiMx1lzXBQEnPv80fR/AFQBXvl14OF5tVA8orqQmgISqMVRj97ML59c7Pu7k719ypQswIrNcZMAdRvJcd8txHA/gN27ftkeaBnSMojGK5lb6o/RGuN3Zti1yuUfxnZ2Sdu1apkJE482m4wlQZJaLfHvJzERE/HXu+yNxTdswDIMcx6kH7ZFABGLu9UnEzCAvFotx06mdYV/5Kj6SeJ/rrUMXL35Q7vgcSoaJiJmZstnsdvy4dR3ASSISzCwAxr8vH8SCiBnw4CsbPvOPe7XayuVP0pULF6KBff0vtMMSkEQhwuBjUSqV8rPZLFmWRenX+RJ7X/bldZK/Aad7uf6MseNFAAAAAElFTkSuQmCC"] as const
+const glassSvg = (f: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="22" height="22" viewBox="0 0 22 22"><image width="22" height="22" xlink:href="${GLASS_PNG[glassIndex(f)]}" href="${GLASS_PNG[glassIndex(f)]}"/></svg>`
 const glassColor = (f: number) => (f > 0.5 ? 'suggestion' : f > 0.2 ? 'warning' : 'error')
 
 // ps "etime" is [[dd-]hh:]mm:ss
@@ -346,10 +351,11 @@ export const register: Register = on => {
     const level = fill(now, num((await read($, water)).lastDrink))
     const glass: Seg = { t: glassIcon(level), c: glassColor(level), bold: true, press: 'water' }
     const leftMin = Math.ceil((level * DRAIN_MS) / 60000)
+    const hint = Svg ? 'use Refill when you drink' : 'click the glass to refill'
     const waterTip =
       level <= 0
-        ? 'Water is empty: time to drink! Click the glass to refill.'
-        : `Water ${Math.round(level * 100)}% · empty in ${leftMin}m · click the glass to refill`
+        ? `Water is empty: time to drink! ${Svg ? 'Press Refill after.' : 'Click the glass to refill.'}`
+        : `Water ${Math.round(level * 100)}% · empty in ${leftMin}m · ${hint}`
     const gap: Seg = { t: ' ' }
     // A line is a list of styled runs; widths are measured on their plain text.
     type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' }
@@ -406,17 +412,28 @@ export const register: Register = on => {
     const runs = (line: Seg[]) =>
       line.map(x =>
         x.press ? (
-          <Box key="glass">
-            <Button key="water" plain label="Water glass: click to refill" onPress={refill}>
-              <Text color={x.c} bold={x.bold}>
-                {x.t}
-              </Text>
-            </Button>
-            {/* Hover card: absolute (no reflow), left of the glass, hidden until the pointer is on it. */}
-            <Box position="absolute" top={0} right={cells(x.t)} display="none" hover={{ display: 'flex' }}>
-              <Text inverse>{` ${waterTip} `}</Text>
+          Svg ? (
+            // Desktop / editor / mobile: the glass is an image; the card (absolute, so no height) holds the info and the button.
+            <Box key="glass">
+              <Svg source={glassSvg(level)} alt={`Water glass, ${Math.round(level * 100)}% full`} width={22} height={22} />
+              <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }}>
+                <Text inverse>{` ${waterTip} `}</Text>
+                <Button key="water" label={level <= 0 ? 'Drink and refill' : 'Refill glass'} onPress={refill} />
+              </Box>
             </Box>
-          </Box>
+          ) : (
+            // Terminal: a Button drawn from block characters, plus a hover card.
+            <Box key="glass">
+              <Button key="water" plain label="Water glass: click to refill" onPress={refill}>
+                <Text color={x.c} bold={x.bold}>
+                  {x.t}
+                </Text>
+              </Button>
+              <Box position="absolute" top={0} right={cells(x.t)} display="none" hover={{ display: 'flex' }}>
+                <Text inverse>{` ${waterTip} `}</Text>
+              </Box>
+            </Box>
+          )
         ) : (
           <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
             {x.t}
