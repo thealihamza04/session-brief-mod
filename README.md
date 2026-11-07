@@ -17,6 +17,16 @@ A Claude Code mod that draws three dim lines above the prompt:
 
 Each line is color-coded with the terminal theme's own colors: `◎` purpose (blue), `✓` done (green, the older one dimmed), `●` active / `⏸` idle chips (blue / amber highlight), `◷` start time, `▣` app uptime, `◆` tokens (purple). When a line is cut off to fit a narrow window, hovering that line's own text (not the time column, the glass or the other lines) shows the full text (plus the hidden time column, if it was dropped) in a card that floats over the band and adds no height. The terminal has no floating cards, so there the full line expands in place.
 
+## Working time
+
+The first row's chip is your current focus stretch (it restarts after a 30-minute break). The `since` line under it is when your **working period** began: breaks inside a period are counted, not reset, and only a gap of 4 hours or more starts a new period (a start from yesterday is shown as `yest 6:58 PM`). Hover the chip or the `since` text (desktop and editor) for the time card:
+
+- **Now:** your current stretch, or how long you have been idle.
+- **Active:** work time in this period, counting gaps up to 30 minutes and any turn that was running.
+- **Breaks:** idle time inside the period.
+- **Started:** when the period began.
+- **This chat:** active time in this session only. Periods are shared by all sessions; each chat also keeps its own.
+
 ## Water glass
 
 A small glass icon sits at the start of the right column's first row and drains over 45 minutes through five levels: full, three quarters, half, low, empty. On the desktop app and editor it is an image (a filled glass and an empty glass, with the water cut to each level); in the terminal it is drawn with block characters (`▕█▏` ... `▕ ▏`). Hover the glass for a card with the level and time left; on the desktop the card is one compact line (`89% · empty in 40m`) with a **Refill** button (**I drank** when empty) (in the terminal, click the glass itself). The level is shared by all your sessions. When it is empty you get a toast once, then again every 15 minutes while you keep working, and none while you are away (30+ minutes without activity). Change `DRAIN_MS` in `hooks/register.tsx` to drain faster or slower.
@@ -57,7 +67,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 118 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 134 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

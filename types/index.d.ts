@@ -43,6 +43,19 @@ export type Git = {
   branch: string
 }
 
+/** Time accounting: active vs idle, from activity events (prompts and finished turns). */
+export type Meter = {
+  /** ms epoch of the first activity (0 = none yet) */
+  startedAt: number
+  lastActive: number
+  /** ms spent working (gaps up to 30 minutes, and any turn in progress) */
+  active: number
+  /** ms of breaks (gaps longer than 30 minutes) */
+  idle: number
+  /** a turn is running: the time until it completes counts as active */
+  inTurn: boolean
+}
+
 export type Water = {
   /** ms epoch the glass was last filled (0 = never seen) */
   lastDrink: number
@@ -50,6 +63,6 @@ export type Water = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number; water: Water; share: Share; git: Git }
+    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number; water: Water; share: Share; git: Git; period: Meter; sess: Meter }
   }
 }

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Brief, ChatTimer, Draft, Git, Share, Water } from '../types'
+import type { Brief, ChatTimer, Draft, Git, Meter, Share, Water } from '../types'
 
 const TOOL = 'mcp__session-brief__set_brief'
 
@@ -27,6 +27,14 @@ const NUDGE_EVERY_MS = 15 * 60 * 1000
 
 const water = atom({ plugin: 'session-brief', key: 'water' } as const, { lastDrink: 0 } as Water)
 const tokens = atom({ plugin: 'session-brief', key: 'tokens' } as const, 0)
+
+// A gap longer than this starts a new working period (breaks inside a period are counted, not reset).
+const PERIOD_GAP_MS = 4 * 60 * 60 * 1000
+
+const emptyMeter = (): Meter => ({ startedAt: 0, lastActive: 0, active: 0, idle: 0, inTurn: false })
+// The working period is shared by every session; `sess` is this chat's own active time.
+const period = atom({ plugin: 'session-brief', key: 'period' } as const, emptyMeter())
+const sess = atom({ plugin: 'session-brief', key: 'sess' } as const, emptyMeter())
 
 // ---------- share tracker (per project) ----------
 
@@ -189,6 +197,42 @@ const asStretch = (x: unknown): Stretch | null => {
   return startedAt && lastActive ? { startedAt, lastActive } : null
 }
 
+const asMeter = (x: unknown): Meter => {
+  const o = x as Partial<Record<keyof Meter, unknown>> | null
+  return { startedAt: num(o?.startedAt), lastActive: num(o?.lastActive), active: num(o?.active), idle: num(o?.idle), inTurn: o?.inTurn === true }
+}
+
+/**
+ * Count the time since the last activity as active (a short gap, or a turn in progress) or idle
+ * (a long gap), then make now the last activity. `resetAfter` starts a fresh meter after a very long gap.
+ */
+const tickMeter = (m: Meter, now: number, kind: 'prompt' | 'done', resetAfter = 0): Meter => {
+  if (!m.startedAt || (resetAfter > 0 && now - m.lastActive > resetAfter)) {
+    return { startedAt: now, lastActive: now, active: 0, idle: 0, inTurn: kind === 'prompt' }
+  }
+  const d = Math.max(0, now - m.lastActive)
+  const isActive = m.inTurn || d <= BREAK_MS
+  return {
+    ...m,
+    active: m.active + (isActive ? d : 0),
+    idle: m.idle + (isActive ? 0 : d),
+    lastActive: Math.max(m.lastActive, now),
+    inTurn: kind === 'prompt',
+  }
+}
+
+/** Today -> "6:58 PM", yesterday -> "yest 6:58 PM", older -> "Nov 6 6:58 PM". */
+const dayTime = (ms: number, now: number) => {
+  const d = new Date(ms)
+  const n = new Date(now)
+  const sameDay = d.toDateString() === n.toDateString()
+  const y = new Date(n)
+  y.setDate(n.getDate() - 1)
+  const mon = d.toLocaleString('en-US', { month: 'short' })
+  const when = sameDay ? '' : d.toDateString() === y.toDateString() ? 'yest ' : `${mon} ${d.getDate()} `
+  return `${when}${clockTime(ms)}`
+}
+
 /** Multi-line text from storage or the model: ANSI/control stripped, blank runs collapsed, clipped by characters. */
 const block = (x: unknown, max: number) =>
   typeof x === 'string'
@@ -346,6 +390,20 @@ const openUrl = async ($: any, url: string): Promise<boolean> => {
   return run(['rundll32', 'url.dll,FileProtocolHandler', url])
 }
 
+/** Record an activity (a prompt, or a finished turn) in the working period and in this chat's meter. */
+const tickMeters = async ($: any, kind: 'prompt' | 'done') => {
+  await safely(async () => {
+    const now = await $.clock.now()
+    const id = await $.session.id()
+    const per = tickMeter(asMeter(await $.store.get('period')), now, kind, PERIOD_GAP_MS)
+    const se = tickMeter(asMeter(await $.store.get(`sess:${id}`)), now, kind)
+    await $.store.set('period', per)
+    await $.store.set(`sess:${id}`, se)
+    await update($, period, () => per)
+    await update($, sess, () => se)
+  })
+}
+
 const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The newest done line is also logged as a shareable progress update for the user's project, so make it a real, specific accomplishment written as one clear sentence (for example "Added login rate limiting"); never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
 
 export const register: Register = on => {
@@ -371,6 +429,15 @@ export const register: Register = on => {
 
     // The work stretch is shared by every session (kept in the plugin store).
     const stretch = asStretch(await $.store.get('stretch'))
+
+    // The working period (migrated from the old stretch the first time) and this chat's own meter.
+    const storedPeriod = await $.store.get('period')
+    let per = storedPeriod ? asMeter(storedPeriod) : emptyMeter()
+    if (!per.startedAt && stretch) per = { ...emptyMeter(), startedAt: stretch.startedAt, lastActive: stretch.lastActive }
+    if (!storedPeriod && per.startedAt) await safely(() => $.store.set('period', per))
+    await safely(() => update($, period, () => per))
+    const mine = asMeter(await $.store.get(`sess:${id}`))
+    await safely(() => update($, sess, () => mine))
 
     // "App" = how long the Claude desktop app has been running, read from the OS.
     let openedAt = 0
@@ -492,6 +559,7 @@ export const register: Register = on => {
       await $.store.set('stretch', { startedAt, lastActive: now })
       await update($, timer, t => ({ ...t, startedAt, lastActive: now, now }))
     })
+    await tickMeters($, 'prompt')
     return next(e)
   })
 
@@ -504,6 +572,7 @@ export const register: Register = on => {
       const startedAt = !stored || now - stored.lastActive > BREAK_MS ? now : stored.startedAt
       await $.store.set('stretch', { startedAt, lastActive: now })
       await update($, timer, t => ({ ...t, startedAt, lastActive: now, now }))
+      await tickMeters($, 'done')
 
       // Tokens this turn, cache reads excluded (they would dwarf everything else).
       const u = r.usage
@@ -565,13 +634,28 @@ export const register: Register = on => {
       ? [{ t: '   ', press: 'share' }, ...(unshared > 0 ? [gap, { t: String(unshared), c: badgeColor[lvl], bold: true }] : []), gap]
       : []
     // A line is a list of styled runs; widths are measured on their plain text.
-    type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' | 'share'; spacer?: boolean }
+    type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' | 'share'; spacer?: boolean; scope?: string; card?: 'time' }
     const plain = (line: Seg[]) => line.map(x => x.t).join('')
 
     const left: Seg[][] = [
       [{ t: '◎ ', c: 'suggestion', bold: true }, { t: b.purpose, c: 'text', bold: true }],
       ...b.done.map((d, i): Seg[] => [{ t: '✓ ', c: 'success', bold: true }, { t: d, c: i === 0 ? 'text' : 'subtle' }]),
     ]
+
+    // Working period: when you began (breaks inside it do not reset it), and active vs break time.
+    const per = await read($, period)
+    const se = await read($, sess)
+    const periodStart = Math.min(num(per.startedAt) || startedAt, now)
+    const timeRows: [string, string, string][] = [
+      ['Now', isIdle ? `idle ${fmt(now - lastActive)}` : `${fmt(now - startedAt)} focused`, isIdle ? 'warning' : 'suggestion'],
+      ['Active', `${fmt(per.active)} in this period`, 'text'],
+      ['Breaks', fmt(per.idle), 'subtle'],
+      ['Started', dayTime(periodStart, now), 'text'],
+      ['This chat', `${fmt(se.active)} active`, 'text'],
+    ]
+    const timeCard: Seg[] = Svg ? [{ t: '', card: 'time' }] : []
+    // Only surfaces that draw the card make the time texts hover triggers.
+    const ts = Svg ? 'time' : undefined
 
     const appLine: Seg[] = [
       { t: '▣ ', c: 'subtle' },
@@ -583,13 +667,13 @@ export const register: Register = on => {
         ? [[glass, gap, ...shareSegs], [], []]
         : isIdle
           ? [
-              [glass, gap, ...shareSegs, { t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
-              [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }],
+              [glass, gap, ...shareSegs, { t: '⏸ ', c: 'warning', bold: true, scope: ts }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true, scope: ts }],
+              [{ t: '◷ ', c: 'subtle', scope: ts }, { t: 'last ', c: 'subtle', scope: ts }, { t: fmt(lastActive - startedAt), c: 'text', scope: ts }, ...timeCard],
               appLine,
             ]
           : [
-              [glass, gap, ...shareSegs, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
-              [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: clockTime(startedAt), c: 'text' }],
+              [glass, gap, ...shareSegs, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true, scope: ts }, { t: ' work', c: 'subtle', scope: ts }],
+              [{ t: '◷ ', c: 'subtle', scope: ts }, { t: 'since ', c: 'subtle', scope: ts }, { t: dayTime(periodStart, now), c: 'text', scope: ts }, ...timeCard],
               appLine,
             ]
 
@@ -722,7 +806,17 @@ export const register: Register = on => {
 
     const runs = (line: Seg[]) =>
       line.map(x =>
-        x.spacer ? (
+        x.card ? (
+          <Box position="absolute" top={0} right={0} display="none" hover={{ scope: 'time', display: 'flex' }} flexDirection="column" gap="sm">
+            <Text bold>Working time</Text>
+            {timeRows.map(([k, v, c]) => (
+              <Text>
+                <Text color="subtle">{`${k} · `}</Text>
+                <Text color={c} bold>{v}</Text>
+              </Text>
+            ))}
+          </Box>
+        ) : x.spacer ? (
           <Box width={1} />
         ) : x.press === 'share' ? (
           shareNode()
@@ -758,6 +852,12 @@ export const register: Register = on => {
               </Box>
             </Box>
           )
+        ) : x.scope ? (
+          <Box hover={{ scope: x.scope }}>
+            <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
+              {x.t}
+            </Text>
+          </Box>
         ) : (
           <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
             {x.t}

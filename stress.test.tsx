@@ -413,7 +413,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
     expect(cards.length).toBe(1) // only the cut line gets one
     expect(cards[0].props.position).toBe('absolute') // adds no height
     expect(textAll(cards[0])).toContain(purpose) // the whole line, not clipped
-    expect(hidden.length).toBe(3) // + the water glass's card and the share card
+    expect(hidden.length).toBe(4) // + the water glass, share and time cards
     // the old invisible-SVG tooltip is gone
     expect(findAllType(root, 'Svg').filter((v: any) => v.props.isInteractive).length).toBe(0)
     await ui.unmount()
@@ -619,8 +619,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND(40), surface })
     const root = await ui.drawn()
     const boxes = findAllType(root, 'Box')
-    const triggers = boxes.filter((b: any) => hoverOf(b)?.scope && hoverOf(b)?.display !== 'flex')
-    const cards = boxes.filter((b: any) => hoverOf(b)?.scope && hoverOf(b)?.display === 'flex' && textAll(b).includes('Purpose'))
+    const triggers = boxes.filter((b: any) => /^tip\d$/.test(hoverOf(b)?.scope ?? '') && hoverOf(b)?.display !== 'flex')
+    const cards = boxes.filter((b: any) => /^tip\d$/.test(hoverOf(b)?.scope ?? '') && hoverOf(b)?.display === 'flex' && textAll(b).includes('Purpose'))
     expect(triggers.length).toBe(1)
     expect(cards.length).toBe(1)
     expect(hoverOf(triggers[0])!.scope).toBe(hoverOf(cards[0])!.scope) // same group
@@ -642,7 +642,7 @@ test('no card at all when nothing is cut, on any surface', async ($, on) => {
     const ui = await $.ui.mount({ ...BAND(100), surface })
     const boxes = findAllType(await ui.drawn(), 'Box')
     // the only hidden Boxes left are the water glass's card and (where images exist) the share card
-    expect(boxes.filter((b: any) => b.props?.display === 'none').length).toBe(surface === 'terminal' ? 1 : 2)
+    expect(boxes.filter((b: any) => b.props?.display === 'none').length).toBe(surface === 'terminal' ? 1 : 3)
     expect(boxes.filter((b: any) => /^tip\d$/.test(hoverOf(b)?.scope ?? '')).length).toBe(0)
     await ui.unmount()
   }
@@ -1128,5 +1128,180 @@ test('spacing: the card separates its rows (a gap step), so buttons of one row n
   // status sits right after the name in one Text run (no fixed-width columns to misalign)
   const li = (card.children as any[]).find((c: any) => c.type === 'Box' && textAll(c).startsWith('LinkedIn'))
   expect(textAll(li)).toMatch(/^LinkedIn · 1 new$/)
+  await ui.unmount()
+})
+
+// ====================================================================
+// working period: "since" = when you began, breaks counted not reset
+// ====================================================================
+
+const submit = ($: any) => $.prompt.submit({ text: 'x' })
+const finish = ($: any) => completeTurn($, undefined)
+const timeCardOf = (root: any) =>
+  findAllType(root, 'Box').find((b: any) => hoverOf(b)?.scope === 'time' && hoverOf(b)?.display === 'flex')
+const cardText = async (ui: any) => textAll(timeCardOf(await ui.drawn()))
+const HOUR = 60 * MIN
+
+test('period: the user scenario - 1h25m of work, a 2h break, back for 10m: since shows the ORIGINAL start', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 0; i < 17; i++) {
+    await submit($)
+    await clock.advance(MIN)
+    await finish($)
+    await clock.advance(4 * MIN)
+  }
+  await clock.advance(120 * MIN) // two hours idle
+  await submit($)
+  await clock.advance(10 * MIN)
+  await finish($)
+  const rs = await rows(ui)
+  expect(rs[0].right).toMatch(/\b10m\b/) // the current stretch: 10 minutes
+  expect(rs[1].right).toMatch(/since 1:00 PM/) // not 3:25 PM: the period began at 1:00 PM
+  const card = await cardText(ui)
+  expect(card).toMatch(/Now · 10m focused/)
+  expect(card).toMatch(/Active · 1h31m in this period/) // 81m of work + the 10m turn
+  expect(card).toMatch(/Breaks · 2h04m/)
+  expect(card).toMatch(/Started · 1:00 PM/)
+  expect(card).toMatch(/This chat · 1h31m active/)
+  await ui.unmount()
+})
+
+test('period: a gap of 4 hours or more starts a fresh working period (active and breaks reset)', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await submit($)
+  await clock.advance(30 * MIN)
+  await finish($)
+  await clock.advance(5 * HOUR)
+  await submit($)
+  await clock.advance(2 * MIN)
+  await finish($)
+  const card = await cardText(ui)
+  expect(card).toMatch(/Active · 2m in this period/)
+  expect(card).toMatch(/Breaks · 0m/)
+  expect(card).toMatch(/Started · 6:30 PM/) // 1:00 PM + 30m + 5h
+  expect((await rows(ui))[1].right).toMatch(/since 6:30 PM/)
+  await ui.unmount()
+})
+
+test('period: a long turn (a 60-minute run) counts as active work, not a break', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await submit($)
+  await clock.advance(60 * MIN)
+  await finish($)
+  const card = await cardText(ui)
+  expect(card).toMatch(/Active · 1h00m in this period/)
+  expect(card).toMatch(/Breaks · 0m/)
+  await ui.unmount()
+})
+
+test('period: a new chat continues the period but its own active time starts at zero', async ($, on) => {
+  await boot($, on, { store: { period: { startedAt: NOW - 3 * HOUR, lastActive: NOW - MIN, active: 150 * MIN, idle: 30 * MIN, inTurn: false } } })
+  const ui = await $.ui.mount(desk())
+  const card = await cardText(ui)
+  expect(card).toMatch(/Active · 2h30m in this period/)
+  expect(card).toMatch(/Breaks · 30m/)
+  expect(card).toMatch(/Started · 10:00 AM/)
+  expect(card).toMatch(/This chat · 0m active/)
+  await ui.unmount()
+})
+
+test('period: this chat keeps its own active time across a restart (stored per session)', async ($, on) => {
+  await boot($, on, { store: { 'sess:s1': { startedAt: NOW - HOUR, lastActive: NOW - MIN, active: 40 * MIN, idle: 0, inTurn: false } } })
+  const ui = await $.ui.mount(desk())
+  expect(await cardText(ui)).toMatch(/This chat · 40m active/)
+  await ui.unmount()
+})
+
+test('period: the old stretch seeds the period the first time (upgrade path)', async ($, on) => {
+  await boot($, on, { store: { stretch: { startedAt: NOW - 2 * HOUR, lastActive: NOW - MIN } } })
+  const ui = await $.ui.mount(desk())
+  expect((await rows(ui))[1].right).toMatch(/since 11:00 AM/)
+  await ui.unmount()
+})
+
+test('period: a start from yesterday or earlier is labeled with the day', async ($, on) => {
+  await boot($, on, { store: { period: { startedAt: NOW - 20 * HOUR, lastActive: NOW - 10 * MIN, active: HOUR, idle: 0 } } })
+  let ui = await $.ui.mount(desk())
+  expect((await rows(ui))[1].right).toMatch(/since yest \d{1,2}:\d{2} (AM|PM)/)
+  await ui.unmount()
+})
+
+test('period: an older start shows the date', async ($, on) => {
+  await boot($, on, { store: { period: { startedAt: NOW - 5 * 24 * HOUR, lastActive: NOW - 10 * MIN, active: HOUR, idle: 0 } } })
+  const ui = await $.ui.mount(desk())
+  expect((await rows(ui))[1].right).toMatch(/since [A-Z][a-z]{2} \d{1,2} \d{1,2}:\d{2} (AM|PM)/)
+  await ui.unmount()
+})
+
+for (const [name, bad] of [
+  ['a string', 'junk'],
+  ['NaN and negatives', { startedAt: NaN, lastActive: -1, active: NaN, idle: -5 }],
+  ['wrong types', { startedAt: '1', active: {}, idle: [], inTurn: 'yes' }],
+  ['a start in the future', { startedAt: NOW + 5 * HOUR, lastActive: NOW + 6 * HOUR, active: HOUR, idle: 0 }],
+  ['absurd totals', { startedAt: NOW - HOUR, lastActive: NOW, active: 1e300, idle: 1e300 }],
+] as const) {
+  test(`period: corrupt store (${name}) never shows junk`, async ($, on) => {
+    await boot($, on, { store: { period: bad as any, 'sess:s1': bad as any } })
+    const ui = await $.ui.mount(desk())
+    const all = (await rows(ui)).map(r => r.left + r.right).join(' ') + (await cardText(ui))
+    expect(all).not.toMatch(/NaN|Infinity|undefined|\[object|-\d/)
+    await ui.unmount()
+  })
+}
+
+test('period: the clock set backwards never reduces active time or moves the start into the future', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await submit($)
+  await clock.advance(10 * MIN)
+  await finish($)
+  const before = await cardText(ui)
+  expect(before).toMatch(/Active · 10m/)
+  // a start dated in the future is clamped to now when shown
+  const rs = await rows(ui)
+  expect(rs[1].right).toMatch(/since 1:00 PM/)
+  await ui.unmount()
+})
+
+test('time card: lives on desktop/editor only, opened by the work chip and the since text (not the glass or megaphone)', async ($, on) => {
+  await boot($, on)
+  await submit($)
+  for (const surface of ['desktop', 'vscode'] as const) {
+    const ui = await $.ui.mount({ ...BAND(100), surface })
+    const root = await ui.drawn()
+    const card = timeCardOf(root)
+    expect(card).toBeTruthy()
+    expect(card.props.position).toBe('absolute') // no extra height
+    expect(card.props.display).toBe('none')
+    const triggers = findAllType(root, 'Box').filter((b: any) => hoverOf(b)?.scope === 'time' && hoverOf(b)?.display !== 'flex')
+    const triggerText = triggers.map((b: any) => textAll(b)).join('|')
+    expect(triggerText).toMatch(/work/)
+    expect(triggerText).toMatch(/since/)
+    expect(triggerText).not.toMatch(/\d{3,}k|app/) // the app/token line is not a trigger
+    // the glass and megaphone are never inside the time group
+    expect(triggers.every((b: any) => findAllType(b, 'Svg').length === 0)).toBe(true)
+    await ui.unmount()
+  }
+  const term = await $.ui.mount(BAND(100))
+  const troot = await term.drawn()
+  expect(timeCardOf(troot)).toBeUndefined()
+  expect(findAllType(troot, 'Box').filter((b: any) => hoverOf(b)?.scope === 'time').length).toBe(0)
+  await term.unmount()
+})
+
+test('time card: idle state says so, and the since line keeps the original start', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await submit($)
+  await clock.advance(20 * MIN)
+  await finish($)
+  await clock.advance(90 * MIN) // idle (> 30m) but inside the 4h period
+  const rs = await rows(ui)
+  expect(rs[0].right).toMatch(/idle 1h30m/)
+  expect(rs[1].right).toMatch(/last 20m/) // the stretch that ended
+  expect(await cardText(ui)).toMatch(/Now · idle 1h30m/)
   await ui.unmount()
 })
