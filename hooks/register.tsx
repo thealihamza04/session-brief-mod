@@ -551,16 +551,16 @@ export const register: Register = on => {
     ]
     const right: Seg[][] =
       startedAt === 0
-        ? [[glass], shareSegs, []]
+        ? [[glass, gap, ...shareSegs], [], []]
         : isIdle
           ? [
-              [glass, gap, { t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
-              [...shareSegs, { t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }],
+              [glass, gap, ...shareSegs, { t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }],
+              [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }],
               appLine,
             ]
           : [
-              [glass, gap, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
-              [...shareSegs, { t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: clockTime(startedAt), c: 'text' }],
+              [glass, gap, ...shareSegs, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }],
+              [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: clockTime(startedAt), c: 'text' }],
               appLine,
             ]
 

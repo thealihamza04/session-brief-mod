@@ -652,17 +652,19 @@ const shareCard = (root: any) =>
   findAllType(root, 'Box').find((b: any) => b.props?.display === 'none' && textAll(b).includes('Share your progress'))
 const iconSources = (root: any) => findAllType(root, 'Svg').map((v: any) => v.props.source as string)
 const btn = (root: any, key: string) => findAllType(root, 'Button').find((b: any) => b.props?.key === key)
-const badgeText = async (ui: any) => (await rows(ui))[1]?.right ?? ''
+// The megaphone now sits beside the glass on the first row: its number precedes the work/idle chip.
+const badgeText = async (ui: any) => (await rows(ui))[0]?.right ?? ''
+const unsharedOf = async (ui: any) => Number(((await badgeText(ui)).match(/^\s*(\d+)\s+(?:⏸|\d+[mhd])/) ?? [])[1] ?? 0)
 const shareToasts = () => toasts.filter(t => /not shared yet/.test(t))
 
 test('share: each new done line is logged once; the megaphone badge counts them', async ($, on) => {
   await boot($, on)
   const ui = await $.ui.mount(desk())
-  expect(await badgeText(ui)).not.toMatch(/\d ◷/) // nothing yet: no number
+  expect(await unsharedOf(ui)).toBe(0) // nothing yet: no number
   await upd($, 1)
   await upd($, 1) // same line again: not a new update
   await upd($, 2)
-  expect(await badgeText(ui)).toMatch(/2 ◷ since/)
+  expect(await unsharedOf(ui)).toBe(2)
   await ui.unmount()
 })
 
@@ -687,17 +689,17 @@ test('share: the user scenario - post, work more, and the warning comes back wit
     await clock.advance(MIN)
     await upd($, `a${i}`)
   }
-  expect(await badgeText(ui)).toMatch(/4 ◷/)
+  expect(await unsharedOf(ui)).toBe(4)
   await clock.advance(MIN)
   await ui.press({ key: 'posted-linkedin' })
   await ui.press({ key: 'posted-x' })
-  expect(await badgeText(ui)).not.toMatch(/\d ◷/) // 0 unshared: badge gone
+  expect(await unsharedOf(ui)).toBe(0) // 0 unshared: badge gone
   // two more hours of work, two updates
   await clock.advance(60 * MIN)
   await upd($, 'b1')
   await clock.advance(60 * MIN)
   await upd($, 'b2')
-  expect(await badgeText(ui)).toMatch(/2 ◷/) // only the new ones, not the 4 already posted
+  expect(await unsharedOf(ui)).toBe(2) // only the new ones, not the 4 already posted
   await ui.unmount()
 })
 
@@ -710,7 +712,7 @@ test('share: posting on one platform only keeps the badge until both are done; e
   }
   await clock.advance(MIN)
   await ui.press({ key: 'posted-linkedin' })
-  expect(await badgeText(ui)).toMatch(/3 ◷/) // X still has all 3
+  expect(await unsharedOf(ui)).toBe(3) // X still has all 3
   const card = textAll(shareCard(await ui.drawn()))
   expect(card).toMatch(/LinkedIn\s*up to date/)
   expect(card).toMatch(/X\s*3 new/)
@@ -824,7 +826,7 @@ test('share: the log is per project (another project starts at zero)', async ($,
   const now = NOW - 10 * MIN
   await boot($, on, { cwd: '/work/b', store: { 'share:/work/a': { log: [{ at: now, text: 'a1' }, { at: now + 1, text: 'a2' }], shared: { linkedin: 0, x: 0 } } } })
   const ui = await $.ui.mount(desk())
-  expect(await badgeText(ui)).not.toMatch(/\d ◷/)
+  expect(await unsharedOf(ui)).toBe(0)
   await ui.unmount()
 })
 
@@ -832,7 +834,7 @@ test('share: the same project in another session sees the saved log', async ($, 
   const at = NOW - 10 * MIN
   await boot($, on, { cwd: '/work/a', store: { 'share:/work/a': { log: [{ at, text: 'a1' }, { at: at + 1, text: 'a2' }], shared: { linkedin: 0, x: 0 } } } })
   const ui = await $.ui.mount(desk())
-  expect(await badgeText(ui)).toMatch(/2 ◷/)
+  expect(await unsharedOf(ui)).toBe(2)
   await ui.unmount()
 })
 
@@ -858,7 +860,7 @@ for (const [name, bad] of [
 test('share: a log longer than 100 is capped at 100', async ($, on) => {
   await boot($, on, { cwd: '/work/c', store: { 'share:/work/c': { log: Array.from({ length: 1000 }, (_, i) => ({ at: NOW - 100 * MIN + i, text: `e${i}` })), shared: {} } } })
   const ui = await $.ui.mount(desk())
-  expect(await badgeText(ui)).toMatch(/100 ◷/)
+  expect(await unsharedOf(ui)).toBe(100)
   await ui.unmount()
 })
 
@@ -932,8 +934,25 @@ test('share: 200 parallel updates stay consistent (queued writes, capped log, on
   expect(shareToasts().length).toBeGreaterThanOrEqual(1)
   expect(shareToasts().every(t => /^\d+ updates not shared yet/.test(t))).toBe(true)
   const ui = await $.ui.mount(desk())
-  const n = Number(((await badgeText(ui)).match(/(\d+) ◷/) ?? [])[1])
+  const n = await unsharedOf(ui)
   expect(n).toBeGreaterThan(0)
   expect(n).toBeLessThanOrEqual(100)
+  await ui.unmount()
+})
+
+test('the glass and the megaphone sit together on the first row, before the work chip', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const root = await ui.drawn()
+  const first = root.children[0] // first band row
+  const rightBox = first.children[0].children[1]
+  const order = (rightBox.children as any[]).map((c: any) =>
+    c.type === 'Box' && c.props?.key === 'glass' ? 'glass' : c.type === 'Box' && c.props?.key === 'share' ? 'megaphone' : null,
+  ).filter(Boolean)
+  expect(order).toEqual(['glass', 'megaphone'])
+  // and the second row carries only the time, no icons
+  const second = root.children[1].children[0].children[1]
+  expect(findAllType(second, 'Svg').length).toBe(0)
   await ui.unmount()
 })
