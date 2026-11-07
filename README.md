@@ -19,7 +19,7 @@ Each line is color-coded with the terminal theme's own colors: `◎` purpose (bl
 
 ## Working time
 
-The first row's chip is your current focus stretch (it restarts after a 30-minute break). The `since` line under it is when your **working period** began: breaks inside a period are counted, not reset, and only a gap of 4 hours or more starts a new period (a start from yesterday is shown as `yest 6:58 PM`). Hover the top chip (desktop and editor) for a minimal time card: one icon line each for how long you have been focused (or idle), your active time in this period, your breaks (only when there were some), and your active time in this chat. Below that, the three latest sessions as dots (`1:00 PM · 10m 0s · now`) and a `╎ break 35m` line between them; `+N earlier` covers the rest. Periods are shared by all sessions; each chat also keeps its own active time.
+The first row's chip is your current focus stretch (it restarts after a 30-minute break). The `since` line under it is when your **working period** began: breaks inside a period are counted, not reset, and only a gap of 4 hours or more starts a new period (a start from yesterday is shown as `yest 6:58 PM`). Hover the top chip (desktop and editor) for a minimal time card that never repeats the band: your active time in this period, your breaks (only when there were some), and your active time in this chat. When you have had two or more work sessions, the three latest are listed as dots (`1:00 PM · 10m 0s · now`) with a `╎ break 35m` line between them and `+N earlier` for the rest; a single session is not listed, since the chip and the `since` line already say it. Periods are shared by all sessions; each chat also keeps its own active time.
 
 ## Water glass
 
@@ -33,10 +33,10 @@ A megaphone icon sits right beside the water glass at the start of the right col
 
 - **LinkedIn and X rows:** each shows `up to date` or `N new`. **Draft post** asks the model to write a post from your unshared updates (a plain template if the model is unavailable), copies it, and shows an **Open** button that launches your browser on the platform's compose page, prefilled where the platform allows (the desktop app does not open links drawn by a mod, so the mod starts the browser itself with `xdg-open`, `open` or `rundll32`; if that fails, the link is copied instead). Nothing posts until you do. Press **Posted** once you have, and that platform counts as up to date.
 - **GitHub row:** whether your code is pushed (`pushed`, `N commits not pushed`, `N files not committed`, or `no upstream`), read from `git status`. Hidden outside a git repo.
-- **Per project:** the update log and what you have shared are kept per project folder, so work across sessions on one project counts together.
-- **Nudge:** a toast at 3 unshared updates, and again every 3 more.
+- **Per project, per feature:** progress is counted by feature, not by prompt: ten prompts spent fixing one bug are one item. Claude names the feature it is working on and keeps that name until it is finished (`set_brief`'s `feature` field), the tracker merges every prompt of that feature into one entry (with what was done as notes), and drafts are written from features. The log and what you have shared are kept per project folder, so work across sessions on one project counts together.
+- **Nudge:** a toast at 3 unshared features, and again every 3 more.
 
-Every `set_brief` call logs its newest "done" line as an update, so keep those lines specific and free of private details; drafts are AI-written from them and you review before posting. The terminal has no images or floating cards, so there the updates are still logged and the nudge still fires, but the megaphone is not drawn. The platform logos and megaphone are embedded PNGs supplied by the mod's author; check their licenses before redistributing.
+Each `set_brief` call adds its newest "done" line to the current feature's notes, so keep those lines specific and free of private details; drafts are AI-written from the features and you review before posting. If a call names no feature, the progress joins the latest feature when it is recent (within 45 minutes), otherwise it starts a new one. Logs from older versions (one entry per prompt) are grouped into features by time on load.
 
 ## Install
 
@@ -61,7 +61,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 167 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 183 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

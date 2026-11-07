@@ -31,6 +31,7 @@ type Boot = {
   openFails?: boolean // the browser launcher exits non-zero
 }
 let opened: string[][] = []
+let registered: any = null
 let copied: string[] = []
 let modelCalls: string[] = []
 let modelSystems: string[] = []
@@ -44,7 +45,10 @@ async function boot($: any, on: any, o: Boot = {}) {
     return { value: undefined }
   })
   on('session.id', () => ({ value: 's1' }))
-  on('tool.register', () => ({ value: { tool: TOOL } }))
+  on('tool.register', (_: any, e: any) => {
+    registered = e
+    return { value: { tool: TOOL } }
+  })
   copied = []
   modelCalls = []
   modelSystems = []
@@ -662,7 +666,8 @@ test('two cut lines get two separate groups', async ($, on) => {
 // share tracker: update log, badge, nudges, drafts, "posted", git row
 // ====================================================================
 
-const upd = ($: any, i: number | string) => setBrief($, { purpose: 'Proj', done: [`update ${i}`, 'older'] })
+const upd = ($: any, i: number | string) => setBrief($, { purpose: 'Proj', feature: `feature ${i}`, done: [`update ${i}`, 'older'] })
+const work = ($: any, feature: string | undefined, line: string) => setBrief($, { purpose: 'Proj', ...(feature === undefined ? {} : { feature }), done: [line, 'older'] })
 const desk = (cols = 100) => ({ ...BAND(cols), surface: 'desktop' }) as any
 const shareCard = (root: any) =>
   findAllType(root, 'Box').find((b: any) => b.props?.display === 'none' && textAll(b).includes('Share your progress'))
@@ -673,7 +678,7 @@ const badgeText = async (ui: any) => (await rows(ui))[0]?.right ?? ''
 const unsharedOf = async (ui: any) => Number(((await badgeText(ui)).match(/^\s*(\d+)(?:\s*⏸|\s+\d+[mhd])/) ?? [])[1] ?? 0)
 const shareToasts = () => toasts.filter(t => /not shared yet/.test(t))
 
-test('share: each new done line is logged once; the megaphone badge counts them', async ($, on) => {
+test('share: each new FEATURE is counted once (a repeated line or feature is not new); the badge counts features', async ($, on) => {
   await boot($, on)
   const ui = await $.ui.mount(desk())
   expect(await unsharedOf(ui)).toBe(0) // nothing yet: no number
@@ -684,7 +689,7 @@ test('share: each new done line is logged once; the megaphone badge counts them'
   await ui.unmount()
 })
 
-test('share: nudges at 3 unshared updates, then again at 6, never in between', async ($, on) => {
+test('share: nudges at 3 unshared FEATURES, then again at 6, never in between', async ($, on) => {
   await boot($, on)
   for (let i = 1; i <= 2; i++) await upd($, i)
   expect(shareToasts().length).toBe(0)
@@ -695,7 +700,7 @@ test('share: nudges at 3 unshared updates, then again at 6, never in between', a
   expect(shareToasts().length).toBe(1)
   await upd($, 6)
   expect(shareToasts().length).toBe(2)
-  expect(shareToasts()[0]).toMatch(/^3 updates not shared yet/)
+  expect(shareToasts()[0]).toMatch(/^3 features not shared yet/)
 })
 
 test('share: the user scenario - post, work more, and the warning comes back with only the NEW updates', async ($, on) => {
@@ -803,13 +808,14 @@ test('share: model output is cleaned and clipped (X <= 280 chars, LinkedIn <= 13
   await ui.unmount()
 })
 
-test('share: model unavailable -> a plain template draft from the updates (still usable)', async ($, on) => {
+test('share: model unavailable -> a plain template draft from the features (still usable)', async ($, on) => {
   await boot($, on, { model: null })
   const ui = await $.ui.mount(desk())
   await upd($, 'alpha'); await upd($, 'beta')
   await ui.press({ key: 'draft-linkedin' })
   expect(copied.at(-1)).toMatch(/Progress update on demo-project/)
-  expect(copied.at(-1)).toMatch(/update alpha/)
+  expect(copied.at(-1)).toMatch(/- feature alpha/) // the template lists features, not prompts
+  expect(copied.at(-1)).toMatch(/- feature beta/)
   expect(btn(await ui.drawn(), 'open-linkedin')).toBeTruthy()
   await ui.unmount()
 })
@@ -850,7 +856,7 @@ test('share: the log is per project (another project starts at zero)', async ($,
 
 test('share: the same project in another session sees the saved log', async ($, on) => {
   const at = NOW - 10 * MIN
-  await boot($, on, { cwd: '/work/a', store: { 'share:/work/a': { log: [{ at, text: 'a1' }, { at: at + 1, text: 'a2' }], shared: { linkedin: 0, x: 0 } } } })
+  await boot($, on, { cwd: '/work/a', store: { 'share:/work/a': { log: [{ name: 'a1', firstAt: at, lastAt: at, notes: ['a1'] }, { name: 'a2', firstAt: at + 1, lastAt: at + 1, notes: ['a2'] }], shared: { linkedin: 0, x: 0 } } } })
   const ui = await $.ui.mount(desk())
   expect(await unsharedOf(ui)).toBe(2)
   await ui.unmount()
@@ -876,7 +882,7 @@ for (const [name, bad] of [
 }
 
 test('share: a log longer than 100 is capped at 100', async ($, on) => {
-  await boot($, on, { cwd: '/work/c', store: { 'share:/work/c': { log: Array.from({ length: 1000 }, (_, i) => ({ at: NOW - 100 * MIN + i, text: `e${i}` })), shared: {} } } })
+  await boot($, on, { cwd: '/work/c', store: { 'share:/work/c': { log: Array.from({ length: 1000 }, (_, i) => ({ name: `e${i}`, firstAt: NOW - 100 * MIN + i, lastAt: NOW - 100 * MIN + i, notes: [`e${i}`] })), shared: {} } } })
   const ui = await $.ui.mount(desk())
   expect(await unsharedOf(ui)).toBe(100)
   await ui.unmount()
@@ -951,7 +957,7 @@ test('share: 200 parallel updates stay consistent (queued writes, capped log, on
   await boot($, on)
   await Promise.all(Array.from({ length: 200 }, (_, i) => upd($, `p${i}`)))
   expect(shareToasts().length).toBeGreaterThanOrEqual(1)
-  expect(shareToasts().every(t => /^\d+ updates not shared yet/.test(t))).toBe(true)
+  expect(shareToasts().every(t => /^\d+ features not shared yet/.test(t))).toBe(true)
   const ui = await $.ui.mount(desk())
   const n = await unsharedOf(ui)
   expect(n).toBeGreaterThan(0)
@@ -1163,7 +1169,7 @@ test('period: the user scenario - 1h21m of work, a 2h04m break, back for 10m: si
   expect(rs[0].right).toMatch(/\b10m\b/) // the current stretch: 10 minutes
   expect(rs[1].right).toMatch(/since 9:35 AM/) // the period began at 9:35 AM, not at the restart
   const card = await cardText(ui)
-  expect(card).toMatch(/10m focused/)
+  expect(card).not.toMatch(/focused/) // the chip beside the card already says it
   expect(card).toMatch(/1h31m active/) // 81m of work + the 10m turn
   expect(card).toMatch(/2h04m breaks/)
   expect(card).toMatch(/10m in this chat/)
@@ -1278,7 +1284,8 @@ test('time card: only on the top chip, inside its keyed Box (like the glass card
     const card = (w.children as any[]).find((c: any) => c.type === 'Box' && c.props?.display === 'none')
     expect(card).toBeTruthy()
     expect(card.props.position).toBe('absolute') // no extra height
-    expect(textAll(card)).toMatch(/focused|idle/) // the Now line
+    expect(textAll(card)).toMatch(/active/)
+    expect(textAll(card)).not.toMatch(/focused|idle/) // never repeats the chip
     const outside = { children: (w.children as any[]).filter((c: any) => c.props?.display !== 'none') }
     expect(findAllType(outside, 'Svg').length).toBe(0) // the chip itself never wraps the glass or megaphone (the card has its own icons)
     const pill = textAll(outside)
@@ -1322,7 +1329,7 @@ test('time card: idle state says so, and the since line keeps the original start
   const rs = await rows(ui)
   expect(rs[0].right).toMatch(/idle 35m/)
   expect(rs[1].right).toMatch(/last 5m/) // the stretch that ended
-  expect(await cardText(ui)).toMatch(/idle 35m/)
+  expect(await cardText(ui)).not.toMatch(/idle/) // the chip already says idle
   await ui.unmount()
 })
 
@@ -1331,6 +1338,12 @@ test('time card: idle state says so, and the since line keeps the original start
 // ====================================================================
 
 const SEC = 1000
+// An earlier, finished session (ended 60 minutes before NOW), so a session run in a test is the SECOND one
+// and therefore appears in the list (a single session is deliberately not listed: it would repeat "since").
+const earlier = () => {
+  const a = NOW - 90 * MIN
+  return { stretch: { startedAt: a, lastActive: a + 30 * MIN }, period: { startedAt: a, lastActive: a + 30 * MIN, active: 30 * MIN, idle: 0, inTurn: false, runs: [{ start: a, end: a + 30 * MIN }] } }
+}
 const run = async ($: any, clock: any, lengthMs: number) => {
   await submit($)
   await clock.advance(lengthMs)
@@ -1359,7 +1372,7 @@ for (const [label, len, re] of [
   ['1h 07m', HOUR + 7 * MIN, /1:00 PM · 1h 07m/],
 ] as const) {
   test(`sessions: a ${label} session reads "${label}" (seconds under an hour, hours above)`, async ($, on) => {
-    const clock = await boot($, on)
+    const clock = await boot($, on, { store: earlier() })
     const ui = await $.ui.mount(desk())
     await run($, clock, len)
     expect(await cardText(ui)).toMatch(re)
@@ -1402,7 +1415,7 @@ test('sessions: only the three latest are listed, with "+N earlier" for the rest
 })
 
 test('sessions: after a break that ends the work (idle now), the last session is not marked "now"', async ($, on) => {
-  const clock = await boot($, on)
+  const clock = await boot($, on, { store: earlier() })
   const ui = await $.ui.mount(desk())
   await run($, clock, 5 * MIN)
   await clock.advance(35 * MIN)
@@ -1421,14 +1434,16 @@ test('sessions: a gap of 4+ hours starts a new period, so the list starts over',
   await run($, clock, 3 * MIN)
   const card = await cardText(ui)
   expect(card).not.toMatch(/10m 0s/) // the old period's session is gone
-  expect(card).toMatch(/1:00 PM · 3m 0s · now/)
+  expect(card).toMatch(/3m active/)
+  expect(card).not.toMatch(/● /) // one session: nothing to list
   await ui.unmount()
 })
 
-test('sessions: a stored period from an older version (no list) shows one session from its start', async ($, on) => {
+test('sessions: a stored period from an older version (no list) is one session: not listed, since shows its start', async ($, on) => {
   await boot($, on, { store: { period: { startedAt: NOW - 2 * HOUR, lastActive: NOW - 2 * MIN, active: 90 * MIN, idle: 0 } } })
   const ui = await $.ui.mount(desk())
-  expect(await cardText(ui)).toMatch(/11:00 AM · 2h 00m · now/) // live: counted through now
+  expect((await rows(ui))[1].right).toMatch(/since 11:00 AM/)
+  expect(await cardText(ui)).not.toMatch(/● /) // listing it would only repeat the since line
   await ui.unmount()
 })
 
@@ -1450,7 +1465,7 @@ for (const [name, runs] of [
 }
 
 test('sessions: the list is on the time card only; the band rows themselves stay compact', async ($, on) => {
-  const clock = await boot($, on)
+  const clock = await boot($, on, { store: earlier() })
   const ui = await $.ui.mount(desk())
   await run($, clock, 5 * MIN)
   const rs = await rows(ui)
@@ -1490,8 +1505,8 @@ test('time card icons: one distinct small icon per stat line (Breaks only when t
   const ui = await $.ui.mount(desk())
   const card = timeCardOf(await ui.drawn())
   const icons = svgsOf(card).filter((v: any) => v.props.width === 14)
-  expect(icons.map((v: any) => v.props.alt)).toEqual(['Now', 'Active', 'Breaks', 'This chat'])
-  expect(new Set(icons.map((v: any) => v.props.source)).size).toBe(4)
+  expect(icons.map((v: any) => v.props.alt)).toEqual(['Active', 'Breaks', 'This chat'])
+  expect(new Set(icons.map((v: any) => v.props.source)).size).toBe(3)
   for (const v of icons) {
     expect(v.props.isInteractive).toBeFalsy()
     expect(v.props.height).toBe(14)
@@ -1508,18 +1523,7 @@ test('time card is minimal: no headings, no Started row, no Breaks row until the
   const text = textAll(timeCardOf(await ui.drawn()))
   expect(text).not.toMatch(/Working time|Work sessions|Started|breaks/)
   const icons = svgsOf(timeCardOf(await ui.drawn())).filter((v: any) => v.props.width === 14)
-  expect(icons.map((v: any) => v.props.alt)).toEqual(['Now', 'Active', 'This chat'])
-  await ui.unmount()
-})
-
-test('time card icons: the Now icon turns amber when idle, blue when focused', async ($, on) => {
-  const clock = await boot($, on)
-  const ui = await $.ui.mount(desk())
-  await run($, clock, 2 * MIN)
-  const nowIcon = async () => svgsOf(timeCardOf(await ui.drawn())).find((v: any) => v.props.alt === 'Now').props.source as string
-  expect(await nowIcon()).toContain('#4C9BEA')
-  await clock.advance(35 * MIN)
-  expect(await nowIcon()).toContain('#E3A33B')
+  expect(icons.map((v: any) => v.props.alt)).toEqual(['Active', 'This chat'])
   await ui.unmount()
 })
 
@@ -1617,7 +1621,211 @@ test('time card icons and timeline exist on desktop/editor only (the terminal ha
   await term.unmount()
   for (const surface of ['desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ ...BAND(100), surface })
-    expect(svgsOf(timeCardOf(await ui.drawn())).length).toBeGreaterThanOrEqual(3) // the three stat icons
+    expect(svgsOf(timeCardOf(await ui.drawn())).length).toBeGreaterThanOrEqual(2) // the stat icons (Active, This chat)
     await ui.unmount()
   }
+})
+
+
+// ====================================================================
+// share tracker counts FEATURES, not prompts
+// ====================================================================
+
+test('features: ten prompts on one bug are ONE feature (one count, one nudge-free item)', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 1; i <= 10; i++) await work($, 'Fix login redirect bug', `attempt ${i}: tried approach ${i}`)
+  expect(await unsharedOf(ui)).toBe(1)
+  expect(shareToasts().length).toBe(0) // 10 prompts, still one feature: no nudge
+  await ui.unmount()
+})
+
+test('features: a new feature name is a new item; three features nudge once', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 0; i < 4; i++) await work($, 'Login bug', `step ${i}`)
+  await work($, 'Share card', 'built it')
+  expect(await unsharedOf(ui)).toBe(2)
+  expect(shareToasts().length).toBe(0)
+  await work($, 'Dark mode', 'added it')
+  expect(await unsharedOf(ui)).toBe(3)
+  expect(shareToasts().length).toBe(1)
+  expect(shareToasts()[0]).toMatch(/^3 features not shared yet/)
+  await ui.unmount()
+})
+
+test('features: going back to an earlier feature reuses it (no new item)', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await work($, 'Login bug', 'found it')
+  await work($, 'Share card', 'built it')
+  await work($, 'Login bug', 'fixed it')
+  expect(await unsharedOf(ui)).toBe(2)
+  await ui.unmount()
+})
+
+test('features: names match ignoring case and spacing', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await work($, 'Login Bug', 'a')
+  await work($, '  login bug  ', 'b')
+  await work($, 'LOGIN BUG', 'c')
+  expect(await unsharedOf(ui)).toBe(1)
+  await ui.unmount()
+})
+
+test('features: no feature name -> joins the latest feature if it is recent, else starts a new one', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await work($, 'Login bug', 'first')
+  await work($, undefined, 'second, no name')
+  await work($, undefined, 'third, no name')
+  expect(await unsharedOf(ui)).toBe(1) // all attached to "Login bug"
+  await clock.advance(50 * MIN) // longer than the 45-minute window
+  await work($, undefined, 'a different thing entirely')
+  expect(await unsharedOf(ui)).toBe(2)
+  await ui.unmount()
+})
+
+test('features: continued work on a feature you already shared counts it again (as one)', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await work($, 'Share card', 'built it')
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-linkedin' })
+  await ui.press({ key: 'posted-x' })
+  expect(await unsharedOf(ui)).toBe(0)
+  await clock.advance(MIN)
+  for (let i = 0; i < 5; i++) await work($, 'Share card', `polish ${i}`) // five more prompts, same feature
+  expect(await unsharedOf(ui)).toBe(1)
+  await ui.unmount()
+})
+
+test('features: the draft is built per feature (name + what was done), not per prompt', async ($, on) => {
+  await boot($, on, { model: 'post' })
+  const ui = await $.ui.mount(desk())
+  for (let i = 1; i <= 6; i++) await work($, 'Login bug', `try ${i}`)
+  await work($, 'Share card', 'built the card')
+  await ui.press({ key: 'draft-linkedin' })
+  const prompt = modelCalls.at(-1)!
+  expect((prompt.match(/^- /gm) ?? []).length).toBe(2) // two features, not seven prompts
+  expect(prompt).toMatch(/Login bug: /)
+  expect(prompt).toMatch(/try 4; try 5; try 6/) // the latest notes of that feature (last three)
+  expect(prompt).toMatch(/Share card: built the card/)
+  expect(prompt).toMatch(/Features and fixes since my last post/)
+  await ui.unmount()
+})
+
+test('features: the template draft (model unavailable) lists feature names, not every prompt', async ($, on) => {
+  await boot($, on, { model: null })
+  const ui = await $.ui.mount(desk())
+  for (let i = 1; i <= 8; i++) await work($, 'Login bug', `try ${i}`)
+  await work($, 'Share card', 'built the card')
+  await ui.press({ key: 'draft-linkedin' })
+  const text = copied.at(-1)!
+  expect(text).toMatch(/- Login bug/)
+  expect(text).toMatch(/- Share card/)
+  expect((text.match(/^- /gm) ?? []).length).toBe(2)
+  await ui.unmount()
+})
+
+test('features: notes are deduped and capped at 8; names are cleaned and clipped', async ($, on) => {
+  await boot($, on, { model: 'post' })
+  const ui = await $.ui.mount(desk())
+  for (let i = 0; i < 20; i++) await work($, 'Big feature', `note ${i % 12}`)
+  await work($, '\u001b[31mEvil\nname\u0007 ' + 'x'.repeat(200), 'z')
+  await ui.press({ key: 'draft-x' })
+  const prompt = modelCalls.at(-1)!
+  expect(prompt).not.toMatch(/\u001b|\u0007/)
+  expect(prompt).not.toMatch(/Evil\nname/)
+  const bigLine = prompt.split('\n').find(l => l.startsWith('- Big feature'))!
+  expect(bigLine.length).toBeLessThanOrEqual(270)
+  const evil = prompt.split('\n').find(l => /Evil name/.test(l))!
+  expect(evil.replace(/^- /, '').split(':')[0]!.length).toBeLessThanOrEqual(60)
+  await ui.unmount()
+})
+
+test('features: the card says how many FEATURES are not shared (singular and plural)', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await work($, 'One', 'a')
+  expect(textAll(shareCard(await ui.drawn()))).toMatch(/1 feature not shared/)
+  await work($, 'Two', 'b')
+  expect(textAll(shareCard(await ui.drawn()))).toMatch(/2 features not shared/)
+  await ui.unmount()
+})
+
+test('features: the log from older versions (one entry per prompt) is grouped into features on load', async ($, on) => {
+  // 6 prompts 10 minutes apart, a 2-hour gap, then 5 more 10 minutes apart: two pieces of work, not eleven updates.
+  const start = NOW - 6 * HOUR
+  const log: { at: number; text: string }[] = []
+  for (let i = 0; i < 6; i++) log.push({ at: start + i * 10 * MIN, text: `old a${i}` })
+  const second = start + 5 * 10 * MIN + 2 * HOUR
+  for (let i = 0; i < 5; i++) log.push({ at: second + i * 10 * MIN, text: `old b${i}` })
+  await boot($, on, { cwd: '/work/old', store: { 'share:/work/old': { log, shared: { linkedin: 0, x: 0 } } } })
+  const ui = await $.ui.mount(desk())
+  expect(await unsharedOf(ui)).toBe(2)
+  await ui.unmount()
+})
+
+test('features: an old log with every prompt hours apart stays separate (nothing is merged across big gaps)', async ($, on) => {
+  const log = Array.from({ length: 4 }, (_, i) => ({ at: NOW - (5 - i) * 2 * HOUR, text: `old ${i}` }))
+  await boot($, on, { cwd: '/work/old2', store: { 'share:/work/old2': { log, shared: {} } } })
+  const ui = await $.ui.mount(desk())
+  expect(await unsharedOf(ui)).toBe(4)
+  await ui.unmount()
+})
+
+test('features: the set_brief tool asks for a feature name and explains why (many prompts = one feature)', async ($, on) => {
+  await boot($, on)
+  const schema = registered.inputSchema
+  expect(schema.required).toContain('feature')
+  expect(schema.properties.feature.type).toBe('string')
+  expect(schema.properties.feature.description).toMatch(/SAME name on every turn/)
+  expect(schema.properties.feature.description).toMatch(/ten prompts to fix one bug are one feature/)
+})
+
+test('features: 200 parallel prompts on 5 features stay at 5, never one per prompt', async ($, on) => {
+  await boot($, on)
+  await Promise.all(Array.from({ length: 200 }, (_, i) => work($, `Feature ${i % 5}`, `step ${i}`)))
+  const ui = await $.ui.mount(desk())
+  expect(await unsharedOf(ui)).toBe(5)
+  await ui.unmount()
+})
+
+
+// ====================================================================
+// nothing is shown twice
+// ====================================================================
+
+test('no duplicates: the card never repeats the chip (focused/idle) or the since line', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await run($, clock, 12 * MIN)
+  const rs = await rows(ui)
+  const card = await cardText(ui)
+  expect(rs[0].right).toMatch(/12m/) // the chip carries the current stretch...
+  expect(card).not.toMatch(/focused|idle|since/) // ...so the card does not
+  expect(card).not.toMatch(/1:00 PM/) // and one session's start is not repeated from the since line
+  await ui.unmount()
+})
+
+test('no duplicates: a single session is not listed; two or more are', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await run($, clock, 3 * MIN)
+  expect(await cardText(ui)).not.toMatch(/● /)
+  await clock.advance(31 * MIN)
+  await run($, clock, 2 * MIN)
+  expect((await cardText(ui)).match(/● /g)?.length).toBe(2)
+  await ui.unmount()
+})
+
+test('no duplicates: each stat line appears once in the card', async ($, on) => {
+  const a = NOW - 90 * MIN
+  await boot($, on, { store: seeded([{ start: a, end: a + 20 * MIN }, { start: a + 60 * MIN, end: a + 85 * MIN }], { idle: 40 * MIN }) })
+  const ui = await $.ui.mount(desk())
+  const text = textAll(timeCardOf(await ui.drawn()))
+  for (const word of ['active', 'breaks', 'in this chat']) expect((text.match(new RegExp(word, 'g')) ?? []).length).toBe(1)
+  await ui.unmount()
 })

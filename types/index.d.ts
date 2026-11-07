@@ -24,9 +24,19 @@ export type Draft = {
   at: number
 }
 
+export type Feature = {
+  /** a short, stable name for the piece of work (the same across all the prompts that built it) */
+  name: string
+  firstAt: number
+  /** last time progress was recorded on it: what "unshared" is measured by */
+  lastAt: number
+  /** what was done, newest last (deduped, capped): the raw material for the post */
+  notes: string[]
+}
+
 export type Share = {
-  /** every "done" update of this project, oldest first (capped) */
-  log: { at: number; text: string }[]
+  /** the features / fixes / tasks of this project, oldest first (capped). Many prompts on one feature are ONE entry. */
+  log: Feature[]
   /** ms epoch the user last marked a post as shared, per platform (0 = never) */
   shared: { linkedin: number; x: number }
   drafts: { linkedin?: Draft; x?: Draft }

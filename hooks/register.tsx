@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Brief, ChatTimer, Draft, Git, Meter, Share, Water } from '../types'
+import type { Brief, ChatTimer, Draft, Feature, Git, Meter, Share, Water } from '../types'
 
 const TOOL = 'mcp__session-brief__set_brief'
 
@@ -43,6 +43,9 @@ type Plat = 'linkedin' | 'x'
 const PLATS: readonly Plat[] = ['linkedin', 'x']
 const PLAT_LABEL: Record<Plat, string> = { linkedin: 'LinkedIn', x: 'X' }
 const MAX_LOG = 100
+const MAX_NOTES = 8
+// With no feature name given, progress within this long of the last feature belongs to it.
+const FEATURE_GAP_MS = 45 * 60 * 1000
 // Nudge when this many updates are unshared, then again every this many more.
 const NUDGE_AT = 3
 
@@ -281,12 +284,46 @@ const asDraft = (x: unknown): Draft | undefined => {
 }
 
 /** A share state read back from the store: every field validated, nothing trusted. */
+const asFeature = (x: unknown): Feature | null => {
+  const o = x as { name?: unknown; firstAt?: unknown; lastAt?: unknown; notes?: unknown } | null
+  const name = clean(o?.name, 60)
+  const lastAt = num(o?.lastAt)
+  if (!name || !lastAt) return null
+  const notes = (Array.isArray(o?.notes) ? (o.notes as unknown[]) : []).map(n => clean(n, 160)).filter(n => n !== '').slice(-MAX_NOTES)
+  return { name, firstAt: Math.min(num(o?.firstAt) || lastAt, lastAt), lastAt, notes: notes.length ? notes : [name] }
+}
+
+/** The stored log: features, or (from older versions) one entry per prompt, grouped into features by closeness in time. */
+const asLog = (raw: unknown): Feature[] => {
+  const items = Array.isArray(raw) ? (raw as unknown[]) : []
+  const out: Feature[] = []
+  let prevWasLegacy = false
+  for (const it of items) {
+    const o = it as { name?: unknown; at?: unknown; text?: unknown } | null
+    if (o && o.name !== undefined) {
+      const f = asFeature(o)
+      if (f) out.push(f)
+      prevWasLegacy = false
+      continue
+    }
+    const at = num(o?.at)
+    const text = clean(o?.text, 160)
+    if (!at || !text) continue
+    const last = out[out.length - 1]
+    if (prevWasLegacy && last && at - last.lastAt <= FEATURE_GAP_MS) {
+      out[out.length - 1] = { ...last, name: clean(text, 60) || last.name, lastAt: Math.max(last.lastAt, at), notes: [...last.notes, text].slice(-MAX_NOTES) }
+    } else {
+      out.push({ name: clean(text, 60) || text, firstAt: at, lastAt: at, notes: [text] })
+    }
+    prevWasLegacy = true
+  }
+  return out.slice(-MAX_LOG)
+}
+
+/** A share state read back from the store: every field validated, nothing trusted. */
 const asShare = (x: unknown): Share => {
   const o = x as { log?: unknown; shared?: Record<string, unknown>; drafts?: Record<string, unknown>; nudged?: unknown } | null
-  const log = (Array.isArray(o?.log) ? (o.log as unknown[]) : [])
-    .map(e => ({ at: num((e as { at?: unknown })?.at), text: clean((e as { text?: unknown })?.text, 160) }))
-    .filter(e => e.at > 0 && e.text !== '')
-    .slice(-MAX_LOG)
+  const log = asLog(o?.log)
   const drafts: Share['drafts'] = {}
   for (const p of PLATS) {
     const d = asDraft(o?.drafts?.[p])
@@ -303,9 +340,9 @@ const asShare = (x: unknown): Share => {
 
 const shareKey = (cwd: string) => `share:${cwd.slice(0, 300)}`
 const projectName = (cwd: string) => clean(cwd.split(/[\\/]/).filter(Boolean).pop() ?? 'this project', 60) || 'this project'
-const unsharedFor = (s: Share, p: Plat) => s.log.filter(e => e.at > s.shared[p])
+const unsharedFor = (s: Share, p: Plat) => s.log.filter(f => f.lastAt > s.shared[p])
 /** Updates not yet shared on at least one platform: what the badge counts. */
-const unsharedAny = (s: Share) => s.log.filter(e => e.at > Math.min(s.shared.linkedin, s.shared.x)).length
+const unsharedAny = (s: Share) => s.log.filter(f => f.lastAt > Math.min(s.shared.linkedin, s.shared.x)).length
 const badgeLevel = (n: number) => (n <= 0 ? 0 : n < NUDGE_AT ? 1 : n < NUDGE_AT * 2 ? 2 : 3)
 const badgeColor = ['subtle', 'suggestion', 'warning', 'error'] as const
 
@@ -317,7 +354,7 @@ const promptFor = (p: Plat, project: string, items: string[]) => {
     p === 'x'
       ? `Write one X post (max 260 characters, at most 2 hashtags)`
       : `Write a LinkedIn post (about 80 to 120 words, short paragraphs, at most 3 hashtags at the end)`
-  return `${ask} about progress on the project "${project}". Updates since my last post, oldest first:\n${bullets}`
+  return `${ask} about progress on the project "${project}". Features and fixes since my last post (each with what was done), oldest first:\n${bullets}`
 }
 
 /** A plain draft from the update lines, for when the model is unavailable. */
@@ -443,7 +480,7 @@ type IconKind = keyof typeof ICON_BODY
 const iconSvg = (kind: IconKind, color: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON_BODY[kind](color)}</svg>`
 
-const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The newest done line is also logged as a shareable progress update for the user's project, so make it a real, specific accomplishment written as one clear sentence (for example "Added login rate limiting"); never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
+const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), feature (a short, stable name, max 50 chars, for the ONE feature, bug fix or task you are working on: keep the SAME name on every turn until it is finished, because ten prompts spent fixing one bug are ONE feature, and use a new name only when you start different work), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The feature is counted and shared as one item however many prompts it took, and the newest done line is added to its notes for the user's progress posts, so make that line a real, specific accomplishment written as one clear sentence (for example "Added login rate limiting"); never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -543,6 +580,11 @@ export const register: Register = on => {
         type: 'object',
         properties: {
           purpose: { type: 'string', description: 'What this session is for, max 80 chars' },
+          feature: {
+            type: 'string',
+            description:
+              'A short name (max 50 chars) for the ONE feature, bug fix or task you are working on. Keep the SAME name on every turn until it is finished: ten prompts to fix one bug are one feature. Use a new name only when you start different work. Progress is counted and shared per feature, not per prompt.',
+          },
           done: {
             type: 'array',
             items: { type: 'string' },
@@ -551,7 +593,7 @@ export const register: Register = on => {
             description: 'The two most recent things COMPLETED, newest first, max 70 chars each. The first is logged as a shareable update, so keep it specific and free of secrets or private details.',
           },
         },
-        required: ['purpose', 'done'],
+        required: ['purpose', 'done', 'feature'],
       },
       isDeferred: false,
     })
@@ -569,13 +611,28 @@ export const register: Register = on => {
       return { result: 'could not save the brief' }
     }
     await safely(async () => {
-      // Log the newest update (once), count what is unshared and nudge, in one queued write; then refresh git.
+      // Record progress on a FEATURE (many prompts on one feature are one entry), count what is unshared
+      // and nudge, in one queued write; then refresh git.
       const at = await $.clock.now()
       const line = next.done[0] ?? ''
+      const name = clean((e as unknown as { feature?: unknown }).feature, 60)
+      const key = name.toLowerCase()
       let nudgeN = 0
       await commitShare($, s => {
-        const log = s.log.at(-1)?.text === line ? s.log : [...s.log, { at, text: line }].slice(-MAX_LOG)
-        const grown = { ...s, log }
+        const log = [...s.log]
+        // The same named feature (anywhere in the recent log); with no name, the latest one if it is recent.
+        let i = -1
+        if (key) for (let k = log.length - 1; k >= 0; k--) if (log[k]!.name.toLowerCase() === key) { i = k; break }
+        const lastF = log[log.length - 1]
+        if (!key && lastF && at - lastF.lastAt <= FEATURE_GAP_MS) i = log.length - 1
+        if (i >= 0) {
+          const f = log.splice(i, 1)[0]!
+          const notes = f.notes.includes(line) ? f.notes : [...f.notes, line].slice(-MAX_NOTES)
+          log.push({ ...f, lastAt: Math.max(f.lastAt, at), notes })
+        } else {
+          log.push({ name: name || clean(line, 60) || line, firstAt: at, lastAt: at, notes: [line] })
+        }
+        const grown = { ...s, log: log.slice(-MAX_LOG) }
         const n = unsharedAny(grown)
         if (n >= NUDGE_AT && n >= s.nudged + NUDGE_AT) {
           nudgeN = n
@@ -583,7 +640,7 @@ export const register: Register = on => {
         }
         return grown
       })
-      if (nudgeN > 0) $.ui.toast(`${nudgeN} updates not shared yet. Draft a post from the megaphone icon.`, { timeoutMs: 8000 })
+      if (nudgeN > 0) $.ui.toast(`${nudgeN} features not shared yet. Draft a post from the megaphone icon.`, { timeoutMs: 8000 })
       await refreshGit($)
     })
     return { result: 'ok' }
@@ -686,9 +743,9 @@ export const register: Register = on => {
     const per = asMeter(await read($, period))
     const se = asMeter(await read($, sess))
     const periodStart = Math.min(num(per.startedAt) || startedAt, now)
-    // Minimal: one line per stat, icon + words; no headings. Breaks only when there were any.
+    // Minimal and never repeated: the chip already shows the current stretch and the "since" line the start,
+    // so the card adds only what they do not: active time, breaks, and this chat's own time.
     const timeRows: [string, string, IconKind, string, string][] = [
-      [isIdle ? `idle ${fmt(now - lastActive)}` : `${fmt(now - startedAt)} focused`, isIdle ? 'warning' : 'suggestion', 'focus', isIdle ? '#E3A33B' : '#4C9BEA', 'Now'],
       [`${fmt(per.active)} active`, 'text', 'active', '#5BB85D', 'Active'],
       ...(per.idle >= 60_000 ? [[`${fmt(per.idle)} breaks`, 'text', 'breaks', '#E3A33B', 'Breaks'] as [string, string, IconKind, string, string]] : []),
       [`${fmt(se.active)} in this chat`, 'text', 'chat', '#9B8CF2', 'This chat'],
@@ -702,8 +759,9 @@ export const register: Register = on => {
       const len = Math.max(0, (live ? Math.max(r.end, now) : Math.min(r.end, now)) - start)
       return { start, end: start + len, len, live }
     })
-    const shownRuns = runList.slice(-3)
-    const earlierRuns = runList.length - shownRuns.length
+    // One session would just repeat the chip and the since line: list sessions only from two up.
+    const shownRuns = runList.length >= 2 ? runList.slice(-3) : []
+    const earlierRuns = shownRuns.length ? runList.length - shownRuns.length : 0
     // Timeline items: each shown session, with the break between it and the one before it.
     const timeline: ({ brk: string } | { run: (typeof runList)[number] })[] = []
     shownRuns.forEach((r, i) => {
@@ -761,7 +819,10 @@ export const register: Register = on => {
     // Draft a post for one platform from the updates not shared there yet, copy it, and keep it for "Open".
     const draftFor = async (p: Plat) => {
       const cur = await read($, share)
-      const items = unsharedFor(cur, p).map(x => x.text)
+      const feats = unsharedFor(cur, p)
+      // One line per feature (its name and what was done), not one per prompt.
+      const items = feats.map(f => (f.notes.length > 1 || f.notes[0] !== f.name ? `${f.name}: ${f.notes.slice(-3).join('; ')}` : f.name).slice(0, 260))
+      const names = feats.map(f => f.name)
       if (cur.drafting || items.length === 0) return
       await commitShare($, st => ({ ...st, drafting: p }))
       try {
@@ -770,7 +831,7 @@ export const register: Register = on => {
         let text = ''
         const r = await $.model.complete({ model: 'haiku', system: SYSTEM, prompt: promptFor(p, project, items), maxTokens: 700 })
         if (r.isAnswered) text = block(r.text, p === 'x' ? 280 : 1300)
-        if (!text) text = fallbackDraft(p, project, items)
+        if (!text) text = fallbackDraft(p, project, names)
         const at = await $.clock.now()
         await commitShare($, st => ({ ...st, drafts: { ...st.drafts, [p]: { text, url: composeUrl(p, text), at } } }))
         await safely(() => $.ui.copy({ text, surface: e.surface }))
@@ -818,7 +879,7 @@ export const register: Register = on => {
           <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }} flexDirection="column" gap="sm">
             <Box gap={1}>
               <Text bold>Share your progress</Text>
-              <Text color={unshared === 0 ? 'success' : badgeColor[lvl]}>{unshared === 0 ? 'all shared' : `${unshared} not shared`}</Text>
+              <Text color={unshared === 0 ? 'success' : badgeColor[lvl]}>{unshared === 0 ? 'all shared' : `${unshared} feature${unshared === 1 ? '' : 's'} not shared`}</Text>
             </Box>
             {PLATS.map(p => {
               const n = unsharedFor(sh, p).length
@@ -873,7 +934,7 @@ export const register: Register = on => {
               </Box>
             ))}
           </Box>
-          {timeline.length === 0 ? <Text color="subtle">No sessions yet</Text> : null}
+          {runList.length === 0 ? <Text color="subtle">No sessions yet</Text> : null}
           <Box flexDirection="column">
             {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
             {timeline.map(it =>
