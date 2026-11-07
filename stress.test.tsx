@@ -413,7 +413,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
     expect(cards.length).toBe(1) // only the cut line gets one
     expect(cards[0].props.position).toBe('absolute') // adds no height
     expect(textAll(cards[0])).toContain(purpose) // the whole line, not clipped
-    expect(hidden.length).toBe(5) // + the water glass, share, and the two time cards (chip, since)
+    expect(hidden.length).toBe(4) // + the water glass, share and the time card (top chip)
     // the old invisible-SVG tooltip is gone
     expect(findAllType(root, 'Svg').filter((v: any) => v.props.isInteractive).length).toBe(0)
     await ui.unmount()
@@ -642,7 +642,7 @@ test('no card at all when nothing is cut, on any surface', async ($, on) => {
     const ui = await $.ui.mount({ ...BAND(100), surface })
     const boxes = findAllType(await ui.drawn(), 'Box')
     // the only hidden Boxes left are the water glass's card and (where images exist) the share card
-    expect(boxes.filter((b: any) => b.props?.display === 'none').length).toBe(surface === 'terminal' ? 1 : 4)
+    expect(boxes.filter((b: any) => b.props?.display === 'none').length).toBe(surface === 'terminal' ? 1 : 3)
     expect(boxes.filter((b: any) => /^tip\d$/.test(hoverOf(b)?.scope ?? '')).length).toBe(0)
     await ui.unmount()
   }
@@ -1137,7 +1137,7 @@ test('spacing: the card separates its rows (a gap step), so buttons of one row n
 
 const submit = ($: any) => $.prompt.submit({ text: 'x' })
 const finish = ($: any) => completeTurn($, undefined)
-// The time card lives inside the keyed pill Boxes ("timechip", "timesince"): the glass/megaphone pattern.
+// The time card lives inside the keyed top-chip Box ("timechip"): the glass/megaphone pattern.
 const timeCardOf = (root: any) =>
   findAllType(root, 'Box').find((b: any) => b.props?.display === 'none' && textAll(b).includes('Working time'))
 const cardText = async (ui: any) => textAll(timeCardOf(await ui.drawn()))
@@ -1267,32 +1267,34 @@ test('period: the clock set backwards never reduces active time or moves the sta
   await ui.unmount()
 })
 
-test('time card: lives on desktop/editor only, inside keyed pill Boxes (like the glass card), not on the glass or megaphone', async ($, on) => {
+test('time card: only on the top chip, inside its keyed Box (like the glass card); the since line has none', async ($, on) => {
   await boot($, on)
   await submit($)
   for (const surface of ['desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ ...BAND(100), surface })
     const root = await ui.drawn()
     const wrappers = findAllType(root, 'Box').filter((b: any) => b.props?.key === 'timechip' || b.props?.key === 'timesince')
-    expect(wrappers.map((b: any) => b.props.key).sort()).toEqual(['timechip', 'timesince'])
-    for (const w of wrappers) {
-      // each wrapper holds its pill text AND a hidden, absolute card
-      const card = (w.children as any[]).find((c: any) => c.type === 'Box' && c.props?.display === 'none')
-      expect(card).toBeTruthy()
-      expect(card.props.position).toBe('absolute') // no extra height
-      expect(textAll(card)).toMatch(/Working time/)
-      expect(findAllType(w, 'Svg').length).toBe(0) // never wraps the glass or megaphone
-    }
-    const pillText = (k: string) => textAll({ children: (wrappers.find((b: any) => b.props.key === k).children as any[]).filter((c: any) => c.props?.display !== 'none') })
-    expect(pillText('timechip')).toMatch(/work/)
-    expect(pillText('timesince')).toMatch(/since/)
-    expect(pillText('timechip') + pillText('timesince')).not.toMatch(/app|\d{3,}k/) // the app/token line is not a trigger
+    expect(wrappers.map((b: any) => b.props.key)).toEqual(['timechip']) // one card, on the chip
+    const w = wrappers[0]
+    const card = (w.children as any[]).find((c: any) => c.type === 'Box' && c.props?.display === 'none')
+    expect(card).toBeTruthy()
+    expect(card.props.position).toBe('absolute') // no extra height
+    expect(textAll(card)).toMatch(/Working time/)
+    expect(textAll(card)).toMatch(/Work sessions/)
+    expect(findAllType(w, 'Svg').length).toBe(0) // never wraps the glass or megaphone
+    const pill = textAll({ children: (w.children as any[]).filter((c: any) => c.props?.display !== 'none') })
+    expect(pill).toMatch(/work/)
+    expect(pill).not.toMatch(/since|app|\d{3,}k/)
+    // the since line is plain text: no card, no hover box
+    const since = (await rows(ui))[1].right
+    expect(since).toMatch(/since/)
+    expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none' && textAll(b).includes('Working time')).length).toBe(1)
     await ui.unmount()
   }
   const term = await $.ui.mount(BAND(100))
   const troot = await term.drawn()
   expect(timeCardOf(troot)).toBeUndefined()
-  expect(findAllType(troot, 'Box').filter((b: any) => b.props?.key === 'timechip' || b.props?.key === 'timesince').length).toBe(0)
+  expect(findAllType(troot, 'Box').filter((b: any) => b.props?.key === 'timechip').length).toBe(0)
   await term.unmount()
 })
 
@@ -1301,7 +1303,7 @@ test('time card: the same pattern as the glass card (key + hidden absolute child
   const ui = await $.ui.mount(desk())
   const root = await ui.drawn()
   const keyed = (k: string) => findAllType(root, 'Box').find((b: any) => b.props?.key === k)
-  for (const k of ['glass', 'share', 'timechip', 'timesince']) {
+  for (const k of ['glass', 'share', 'timechip']) {
     const box = keyed(k)
     expect(box).toBeTruthy()
     const hiddenKid = (box.children as any[]).find((c: any) => c.type === 'Box' && c.props?.display === 'none')

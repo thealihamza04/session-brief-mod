@@ -686,7 +686,7 @@ export const register: Register = on => {
     })
     const shownRuns = runList.slice(-6)
     const earlierRuns = runList.length - shownRuns.length
-    // A group is a keyed Box holding the pill's runs plus the time card: the same pattern as the
+    // A group is a keyed Box holding the top chip's runs plus the time card: the same pattern as the
     // glass and megaphone cards. (t is the plain text, so width maths still sees the group.)
     const grp = (key: string, segs: Seg[]): Seg => ({ t: segs.map(x => x.t).join(''), group: { key, segs } })
 
@@ -701,12 +701,12 @@ export const register: Register = on => {
         : isIdle
           ? [
               [glass, gap, ...shareSegs, grp('timechip', [{ t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }])],
-              [grp('timesince', [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }])],
+              [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }],
               appLine,
             ]
           : [
               [glass, gap, ...shareSegs, grp('timechip', [{ t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }])],
-              [grp('timesince', [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: dayTime(periodStart, now), c: 'text' }])],
+              [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: dayTime(periodStart, now), c: 'text' }],
               appLine,
             ]
 

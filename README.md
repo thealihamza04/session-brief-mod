@@ -19,7 +19,7 @@ Each line is color-coded with the terminal theme's own colors: `◎` purpose (bl
 
 ## Working time
 
-The first row's chip is your current focus stretch (it restarts after a 30-minute break). The `since` line under it is when your **working period** began: breaks inside a period are counted, not reset, and only a gap of 4 hours or more starts a new period (a start from yesterday is shown as `yest 6:58 PM`). Hover the chip or the `since` text (desktop and editor) for the time card:
+The first row's chip is your current focus stretch (it restarts after a 30-minute break). The `since` line under it is when your **working period** began: breaks inside a period are counted, not reset, and only a gap of 4 hours or more starts a new period (a start from yesterday is shown as `yest 6:58 PM`). Hover the top chip (desktop and editor) for the time card:
 
 - **Now:** your current stretch, or how long you have been idle.
 - **Active:** work time in this period, counting gaps up to 30 minutes and any turn that was running.
