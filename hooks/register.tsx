@@ -657,7 +657,7 @@ export const register: Register = on => {
       ? [{ t: '   ', press: 'share' }, ...(unshared > 0 ? [gap, { t: String(unshared), c: badgeColor[lvl], bold: true }] : []), gap]
       : []
     // A line is a list of styled runs; widths are measured on their plain text.
-    type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' | 'share'; spacer?: boolean; scope?: string; card?: 'time' }
+    type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' | 'share'; spacer?: boolean; group?: { key: string; segs: Seg[] } }
     const plain = (line: Seg[]) => line.map(x => x.t).join('')
 
     const left: Seg[][] = [
@@ -686,9 +686,9 @@ export const register: Register = on => {
     })
     const shownRuns = runList.slice(-6)
     const earlierRuns = runList.length - shownRuns.length
-    const timeCard: Seg[] = Svg ? [{ t: '', card: 'time' }] : []
-    // Only surfaces that draw the card make the time texts hover triggers.
-    const ts = Svg ? 'time' : undefined
+    // A group is a keyed Box holding the pill's runs plus the time card: the same pattern as the
+    // glass and megaphone cards. (t is the plain text, so width maths still sees the group.)
+    const grp = (key: string, segs: Seg[]): Seg => ({ t: segs.map(x => x.t).join(''), group: { key, segs } })
 
     const appLine: Seg[] = [
       { t: '▣ ', c: 'subtle' },
@@ -700,13 +700,13 @@ export const register: Register = on => {
         ? [[glass, gap, ...shareSegs], [], []]
         : isIdle
           ? [
-              [glass, gap, ...shareSegs, { t: '⏸ ', c: 'warning', bold: true, scope: ts }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true, scope: ts }],
-              [{ t: '◷ ', c: 'subtle', scope: ts }, { t: 'last ', c: 'subtle', scope: ts }, { t: fmt(lastActive - startedAt), c: 'text', scope: ts }, ...timeCard],
+              [glass, gap, ...shareSegs, grp('timechip', [{ t: '⏸ ', c: 'warning', bold: true }, { t: ` idle ${fmt(now - lastActive)} `, c: 'inverseText', bg: 'warning', bold: true }])],
+              [grp('timesince', [{ t: '◷ ', c: 'subtle' }, { t: 'last ', c: 'subtle' }, { t: fmt(lastActive - startedAt), c: 'text' }])],
               appLine,
             ]
           : [
-              [glass, gap, ...shareSegs, { t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true, scope: ts }, { t: ' work', c: 'subtle', scope: ts }],
-              [{ t: '◷ ', c: 'subtle', scope: ts }, { t: 'since ', c: 'subtle', scope: ts }, { t: dayTime(periodStart, now), c: 'text', scope: ts }, ...timeCard],
+              [glass, gap, ...shareSegs, grp('timechip', [{ t: ` ${fmt(now - startedAt)} `, c: 'inverseText', bg: 'suggestion', bold: true }, { t: ' work', c: 'subtle' }])],
+              [grp('timesince', [{ t: '◷ ', c: 'subtle' }, { t: 'since ', c: 'subtle' }, { t: dayTime(periodStart, now), c: 'text' }])],
               appLine,
             ]
 
@@ -837,27 +837,38 @@ export const register: Register = on => {
         </Box>
       ) : null
 
-    const runs = (line: Seg[]) =>
+    const timeCardNode = () => (
+      <Box position="absolute" top={0} right={0} display="none" hover={{ display: 'flex' }} flexDirection="column" gap="sm">
+        <Text bold>Working time</Text>
+        {timeRows.map(([k, v, c]) => (
+          <Text>
+            <Text color="subtle">{`${k} · `}</Text>
+            <Text color={c} bold>{v}</Text>
+          </Text>
+        ))}
+        <Text bold>Work sessions</Text>
+        {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
+        {shownRuns.map(r => (
+          <Text>
+            <Text color="subtle">{`${dayTime(r.start, now)} · `}</Text>
+            <Text color={r.live ? 'suggestion' : 'text'} bold>{fmtDur(r.len)}</Text>
+            {r.live ? <Text color="subtle">{' · now'}</Text> : null}
+          </Text>
+        ))}
+      </Box>
+    )
+
+    const runs = (line: Seg[]): any[] =>
       line.map(x =>
-        x.card ? (
-          <Box position="absolute" top={0} right={0} display="none" hover={{ scope: 'time', display: 'flex' }} flexDirection="column" gap="sm">
-            <Text bold>Working time</Text>
-            {timeRows.map(([k, v, c]) => (
-              <Text>
-                <Text color="subtle">{`${k} · `}</Text>
-                <Text color={c} bold>{v}</Text>
-              </Text>
-            ))}
-            <Text bold>Work sessions</Text>
-            {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
-            {shownRuns.map(r => (
-              <Text>
-                <Text color="subtle">{`${dayTime(r.start, now)} · `}</Text>
-                <Text color={r.live ? 'suggestion' : 'text'} bold>{fmtDur(r.len)}</Text>
-                {r.live ? <Text color="subtle">{' · now'}</Text> : null}
-              </Text>
-            ))}
-          </Box>
+        x.group ? (
+          Svg ? (
+            <Box key={x.group.key}>
+              {runs(x.group.segs)}
+              {timeCardNode()}
+            </Box>
+          ) : (
+            <Box>{runs(x.group.segs)}</Box>
+          )
         ) : x.spacer ? (
           <Box width={1} />
         ) : x.press === 'share' ? (
@@ -894,12 +905,6 @@ export const register: Register = on => {
               </Box>
             </Box>
           )
-        ) : x.scope ? (
-          <Box hover={{ scope: x.scope }}>
-            <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
-              {x.t}
-            </Text>
-          </Box>
         ) : (
           <Text color={x.c} backgroundColor={x.bg} bold={x.bold}>
             {x.t}
