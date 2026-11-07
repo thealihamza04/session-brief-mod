@@ -654,7 +654,7 @@ const iconSources = (root: any) => findAllType(root, 'Svg').map((v: any) => v.pr
 const btn = (root: any, key: string) => findAllType(root, 'Button').find((b: any) => b.props?.key === key)
 // The megaphone now sits beside the glass on the first row: its number precedes the work/idle chip.
 const badgeText = async (ui: any) => (await rows(ui))[0]?.right ?? ''
-const unsharedOf = async (ui: any) => Number(((await badgeText(ui)).match(/^\s*(\d+)\s+(?:⏸|\d+[mhd])/) ?? [])[1] ?? 0)
+const unsharedOf = async (ui: any) => Number(((await badgeText(ui)).match(/^\s*(\d+)(?:\s*⏸|\s+\d+[mhd])/) ?? [])[1] ?? 0)
 const shareToasts = () => toasts.filter(t => /not shared yet/.test(t))
 
 test('share: each new done line is logged once; the megaphone badge counts them', async ($, on) => {
@@ -954,5 +954,18 @@ test('the glass and the megaphone sit together on the first row, before the work
   // and the second row carries only the time, no icons
   const second = root.children[1].children[0].children[1]
   expect(findAllType(second, 'Svg').length).toBe(0)
+  await ui.unmount()
+})
+
+test('spacing: real one-cell spacers separate glass, megaphone, count and chip (plain spaces collapse next to images)', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const right = (await ui.drawn()).children[0].children[0].children[1]
+  const kinds = (right.children as any[]).map((c: any) =>
+    c.type === 'Box' && c.props?.width === 1 ? '|' : c.type === 'Box' && c.props?.key === 'glass' ? 'G' : c.type === 'Box' && c.props?.key === 'share' ? 'M' : c.type === 'Text' && /^\d+$/.test(textAll(c)) ? '#' : 'x',
+  )
+  // glass | megaphone | count | chip...
+  expect(kinds.slice(0, 7).join('')).toBe('G|M|#|x')
   await ui.unmount()
 })

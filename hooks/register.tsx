@@ -525,7 +525,8 @@ export const register: Register = on => {
       level <= 0
         ? `Water is empty: time to drink! ${Svg ? 'Press Refill after.' : 'Click the glass to refill.'}`
         : `Water ${Math.round(level * 100)}% · empty in ${leftMin}m · ${hint}`
-    const gap: Seg = { t: ' ' }
+    // A fixed one-cell spacer: plain spaces collapse next to images, so gaps are real boxes.
+    const gap: Seg = { t: ' ', spacer: true }
 
     // Share tracker: how many updates are not shared yet (the megaphone's badge), and git state.
     const sh = await read($, share)
@@ -533,10 +534,10 @@ export const register: Register = on => {
     const unshared = unsharedAny(sh)
     const lvl = badgeLevel(unshared)
     const shareSegs: Seg[] = Svg
-      ? [{ t: '   ', press: 'share' }, ...(unshared > 0 ? [{ t: String(unshared), c: badgeColor[lvl], bold: true }] : []), gap]
+      ? [{ t: '   ', press: 'share' }, ...(unshared > 0 ? [gap, { t: String(unshared), c: badgeColor[lvl], bold: true }] : []), gap]
       : []
     // A line is a list of styled runs; widths are measured on their plain text.
-    type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' | 'share' }
+    type Seg = { t: string; c?: string; bg?: string; bold?: boolean; press?: 'water' | 'share'; spacer?: boolean }
     const plain = (line: Seg[]) => line.map(x => x.t).join('')
 
     const left: Seg[][] = [
@@ -673,7 +674,9 @@ export const register: Register = on => {
 
     const runs = (line: Seg[]) =>
       line.map(x =>
-        x.press === 'share' ? (
+        x.spacer ? (
+          <Box width={1} />
+        ) : x.press === 'share' ? (
           shareNode()
         ) : x.press ? (
           Svg ? (
