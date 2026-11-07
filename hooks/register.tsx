@@ -148,14 +148,6 @@ const clean = (x: unknown, maxCells: number) =>
       )
     : ''
 
-/** XML-escape text for an SVG <title> (the native tooltip). */
-const xml = (x: string) =>
-  x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
-
-/** A transparent, hover-only SVG whose <title> is the browser's own tooltip. */
-const tooltipSvg = (text: string) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="16" viewBox="0 0 4000 16"><rect width="4000" height="16" fill="transparent"><title>${xml(text)}</title></rect></svg>`
-
 /** A brief read back from anywhere (store, tool input): valid, clean, or null. */
 const asBrief = (x: unknown): Brief | null => {
   const o = x as { purpose?: unknown; done?: unknown } | null
@@ -465,11 +457,12 @@ export const register: Register = on => {
               </Box>
               {isCut || hidden ? (
                 Svg ? (
-                  // Native tooltip: absolute, so it adds no height and never leaves the band.
-                  <Box position="absolute" top={0} left={0} width="100%" height={1}>
-                    <Svg source={tooltipSvg(tip)} alt={tip} isInteractive />
+                  // Desktop / editor: a hover card (absolute, so no height) with the whole line.
+                  <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
+                    <Text wrap="wrap">{tip}</Text>
                   </Box>
                 ) : (
+                  // Terminal: the full line expands in place.
                   <Box display="none" hover={{ display: 'flex' }}>
                     <Text wrap="wrap" inverse>
                       {tip}

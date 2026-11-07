@@ -360,26 +360,20 @@ const findAllType = (n: any, type: string, out: any[] = []): any[] => {
 }
 
 for (const surface of ['desktop', 'vscode'] as const) {
-  test(`${surface}: a cut line gets a native tooltip (SVG <title>), absolutely placed, no in-flow reveal`, async ($, on) => {
+  test(`${surface}: a cut line gets a hover card with its full text (absolute, no in-flow reveal)`, async ($, on) => {
     await boot($, on)
-    const purpose = 'Purpose with <tags> & "quotes" that is far too long for a narrow band to show in full'
+    const purpose = 'Purpose that is far too long for a narrow band to show in full, so it must be in the hover card'
     await setBrief($, { purpose, done: ['short', 'tiny'] })
     const ui = await $.ui.mount({ ...BAND(40), surface })
     const root = await ui.drawn()
-    const svgs = findAllType(root, 'Svg').filter((v: any) => v.props.isInteractive) // the line tooltips (the glass icon is not interactive)
-    expect(svgs.length).toBe(1) // only the cut line, not the two short ones
-    const svg = svgs[0]
-    expect(svg.props.isInteractive).toBe(true)
-    expect(svg.props.source).toContain('<title>')
-    expect(svg.props.source).toContain('&lt;tags&gt; &amp; &quot;quotes&quot;') // escaped, cannot inject markup
-    expect(svg.props.source).not.toMatch(/<tags>/)
-    expect(svg.props.alt).toContain('Purpose with') // full text for screen readers
-    // placed absolutely, so it adds no height to the band
-    const abs = findAllType(root, 'Box').filter((b: any) => b.props?.position === 'absolute')
-    expect(abs.filter((b: any) => findAllType(b, 'Svg').length === 1 && !findAllType(b, 'Button').length).length).toBe(1) // the tooltip overlay
-    expect(abs.length).toBe(2) // + the water glass's hover card
-    // no terminal-style in-flow reveal Box beside the line: the only hidden Box is the water card
-    expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(1)
+    const hidden = findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none')
+    const cards = hidden.filter((b: any) => textAll(b).includes('far too long'))
+    expect(cards.length).toBe(1) // only the cut line gets one
+    expect(cards[0].props.position).toBe('absolute') // adds no height
+    expect(textAll(cards[0])).toContain(purpose) // the whole line, not clipped
+    expect(hidden.length).toBe(2) // + the water glass's card
+    // the old invisible-SVG tooltip is gone
+    expect(findAllType(root, 'Svg').filter((v: any) => v.props.isInteractive).length).toBe(0)
     await ui.unmount()
   })
 }
