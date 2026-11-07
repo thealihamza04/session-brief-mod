@@ -1,6 +1,6 @@
 # session-brief
 
-![session-brief above the Claude Code prompt: purpose, last two wins, water glass, share megaphone, work timer](docs/screenshot.webp)
+![Demo: the session-brief band above the Claude Code prompt, the water glass card with its refill button, the share card, and a drafted post opened in X](docs/demo.gif)
 
 A Claude Code mod that draws three dim lines above the prompt:
 
