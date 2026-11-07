@@ -804,7 +804,7 @@ test('share: model output is cleaned and clipped (X <= 280 chars, LinkedIn <= 13
   expect(copied.at(-1)!.length).toBeLessThanOrEqual(280)
   expect(copied.at(-1)).not.toMatch(/\u001b|\[31m/)
   await ui.press({ key: 'draft-linkedin' })
-  expect(copied.at(-1)!.length).toBeLessThanOrEqual(1300)
+  expect(copied.at(-1)!.length).toBeLessThanOrEqual(1000)
   expect(copied.at(-1)).not.toMatch(/\n{3,}/)
   await ui.unmount()
 })
@@ -814,7 +814,7 @@ test('share: model unavailable -> a plain template draft from the features (stil
   const ui = await $.ui.mount(desk())
   await upd($, 'alpha'); await upd($, 'beta')
   await ui.press({ key: 'draft-linkedin' })
-  expect(copied.at(-1)).toMatch(/Progress update on demo-project/)
+  expect(copied.at(-1)).toMatch(/^Progress on demo-project:/)
   expect(copied.at(-1)).toMatch(/- feature alpha/) // the template lists features, not prompts
   expect(copied.at(-1)).toMatch(/- feature beta/)
   expect(btn(await ui.drawn(), 'open-linkedin')).toBeTruthy()
@@ -1891,4 +1891,130 @@ test('no repeats: one platform behind and one caught up reads clearly (X up to d
   expect(rowText(card, 'X')).toBe('X · up to date')
   expect(rowText(card, 'LinkedIn')).toBe('LinkedIn')
   await ui.unmount()
+})
+
+
+// ====================================================================
+// professional + minimal posts
+// ====================================================================
+
+const draftOf = async ($: any, ui: any, p: 'x' | 'linkedin') => {
+  await ui.press({ key: `draft-${p}` })
+  return copied.at(-1)!
+}
+
+test('style: the model is told to be professional and minimal (no emojis/hype, outcome first, no internals)', async ($, on) => {
+  await boot($, on, { model: 'post' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-linkedin' })
+  const sys = modelSystems.at(-1)!
+  expect(sys).toMatch(/professional/)
+  expect(sys).toMatch(/minimal/)
+  expect(sys).toMatch(/no emojis, no exclamation marks/)
+  expect(sys).toMatch(/never "excited", "thrilled"/)
+  expect(sys).toMatch(/Lead with what was achieved/)
+  expect(sys).toMatch(/at most three points/)
+  expect(sys).toMatch(/version numbers, file, function or tool names, bug-hunting chatter, and small visual polish/)
+  expect(sys).toMatch(/never invent dates, timeframes/) // still there
+  expect(sys).toMatch(/Never include secrets/) // still there
+  await ui.unmount()
+})
+
+test('style: the X task asks for <= 240 characters, plain sentences, no hashtags; LinkedIn 50-90 words, short paragraphs, <= 2 hashtags', async ($, on) => {
+  await boot($, on, { model: 'post' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await ui.press({ key: 'draft-x' })
+  expect(modelCalls.at(-1)).toMatch(/at most 240 characters: one or two plain sentences, no hashtags/)
+  await ui.press({ key: 'draft-linkedin' })
+  expect(modelCalls.at(-1)).toMatch(/50 to 90 words in two or three short paragraphs/)
+  expect(modelCalls.at(-1)).toMatch(/At most two hashtags at the end, or none/)
+  await ui.unmount()
+})
+
+test('style (enforced in code): X drops hashtags, emojis and exclamation marks', async ($, on) => {
+  await boot($, on, { model: 'Excited to share this!! 🚀 The share tracker now counts features. #buildinpublic #indiedev' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const t = await draftOf($, ui, 'x')
+  expect(t).not.toMatch(/#|!|🚀/)
+  expect(t).toMatch(/The share tracker now counts features\.$/)
+  await ui.unmount()
+})
+
+test('style (enforced in code): LinkedIn keeps at most two hashtags, no emojis or exclamation marks', async ($, on) => {
+  await boot($, on, { model: 'Progress on the tracker 🎉\n\nIt now counts features, not prompts!\n\n#a #b #c #d' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const t = await draftOf($, ui, 'linkedin')
+  expect(t).not.toMatch(/!|🎉/)
+  expect((t.match(/#\w/g) ?? []).length).toBe(2)
+  expect(t).toMatch(/#a #b/)
+  await ui.unmount()
+})
+
+test('style: quotes that wrap the whole post are removed; a closing quote that belongs to the text stays', async ($, on) => {
+  await boot($, on, { model: '"Added rate limiting to the API."' })
+  let ui = await $.ui.mount(desk())
+  await upd($, 1)
+  expect(await draftOf($, ui, 'x')).toBe('Added rate limiting to the API.')
+  await ui.unmount()
+})
+
+test('style: X is cut at a sentence end (never mid-word, no ellipsis) and stays <= 260', async ($, on) => {
+  const sentence = 'The tracker now groups work by feature and writes one clear post. '
+  await boot($, on, { model: sentence.repeat(10) })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const t = await draftOf($, ui, 'x')
+  expect(t.length).toBeLessThanOrEqual(260)
+  expect(t).toMatch(/\.$/)
+  expect(t).not.toMatch(/…|\.\.\./)
+  expect(t.endsWith('post.') || t.endsWith('feature and writes one clear post.')).toBe(true)
+  await ui.unmount()
+})
+
+test('style: a long unbroken reply is cut at a word boundary, not mid-word', async ($, on) => {
+  await boot($, on, { model: 'alpha '.repeat(200) })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const t = await draftOf($, ui, 'x')
+  expect(t.length).toBeLessThanOrEqual(260)
+  expect(t).toMatch(/alpha$/)
+  expect(t).not.toMatch(/alph$|alp$/)
+  await ui.unmount()
+})
+
+test('style: the plain template (model unavailable) is minimal too: no hashtags, no emoji, short', async ($, on) => {
+  await boot($, on, { model: null })
+  const ui = await $.ui.mount(desk())
+  for (const f of ['Login redirect fix', 'Share card', 'Dark mode', 'Export']) await work($, f, `did ${f}`)
+  const x = await draftOf($, ui, 'x')
+  expect(x).toMatch(/^Progress on demo-project: /)
+  expect(x).not.toMatch(/#|!/)
+  expect(x.length).toBeLessThanOrEqual(260)
+  const li = await draftOf($, ui, 'linkedin')
+  expect((li.match(/^- /gm) ?? []).length).toBeLessThanOrEqual(3) // at most three points
+  expect(li).not.toMatch(/#|!/)
+  await ui.unmount()
+})
+
+test('style: hostile model output (ANSI, control chars, huge) still becomes a clean, short post', async ($, on) => {
+  await boot($, on, { model: '\u001b[31mDone\u0007 \u202e!!!\n\n\n\n' + '🚀 '.repeat(500) + 'z '.repeat(5000) })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const x = await draftOf($, ui, 'x')
+  expect(x).not.toMatch(/\u001b|\u0007|\u202e|!|🚀/)
+  expect(x.length).toBeLessThanOrEqual(260)
+  await ui.unmount()
+})
+
+test('rules: the brief rule asks for outcome-style done lines (no versions, file names or visual tweaks)', async ($, on) => {
+  await boot($, on)
+  const composed: any = await $.prompt.compose({ model: 'claude-sonnet-5-5', promptModel: 'claude-sonnet-5-5', surfaces: ['desktop'], tools: [], outputStyle: null, traits: [] })
+  const text = JSON.stringify(composed)
+  expect(text).toMatch(/OUTCOME for a user, not an internal detail/)
+  expect(text).toMatch(/no version numbers, file or function names, or small visual tweaks/)
+  expect(text).toMatch(/ten prompts spent fixing one bug are ONE feature/) // the feature rule is still there
 })

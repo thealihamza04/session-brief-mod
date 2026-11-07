@@ -36,6 +36,8 @@ A megaphone icon sits right beside the water glass at the start of the right col
 - **Per project, per feature:** progress is counted by feature, not by prompt: ten prompts spent fixing one bug are one item. Claude names the feature it is working on and keeps that name until it is finished (`set_brief`'s `feature` field), the tracker merges every prompt of that feature into one entry (with what was done as notes), and drafts are written from features. The log and what you have shared are kept per project folder, so work across sessions on one project counts together.
 - **Nudge:** a toast at 3 unshared features, and again every 3 more.
 
+**Post style: professional and minimal.** The model is told to write plainly and calmly in the first person, lead with the outcome, mention at most three points, and leave out version numbers, file and tool names, bug-hunting chatter and small visual polish. The code enforces the basics whatever the model does: no emojis or exclamation marks, no hashtags on X, at most two on LinkedIn, wrapping quotes removed, X cut at a sentence end under 260 characters and LinkedIn under 1000. The plain template used when the model is unavailable follows the same rules. Claude is also asked to write each `done` line as an outcome for a user, since the post is built from them.
+
 Each `set_brief` call adds its newest "done" line to the current feature's notes, so keep those lines specific and free of private details; drafts are AI-written from the features and you review before posting. If a call names no feature, the progress joins the latest feature when it is recent (within 45 minutes), otherwise it starts a new one. Logs from older versions (one entry per prompt) are grouped into features by time on load.
 
 ## Install
@@ -61,7 +63,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 187 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 197 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

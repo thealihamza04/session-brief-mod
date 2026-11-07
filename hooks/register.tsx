@@ -346,23 +346,52 @@ const unsharedAny = (s: Share) => s.log.filter(f => f.lastAt > Math.min(s.shared
 const badgeLevel = (n: number) => (n <= 0 ? 0 : n < NUDGE_AT ? 1 : n < NUDGE_AT * 2 ? 2 : 3)
 const badgeColor = ['subtle', 'suggestion', 'warning', 'error'] as const
 
-const SYSTEM = `You write short social posts for a developer sharing progress on their own project. First person, plain and specific, no hype or buzzwords. Use only facts that are in the updates you are given: never invent dates, timeframes (such as "this week"), numbers, results or plans. Never include secrets, credentials, personal data, client names, file paths or private details; generalise anything that looks private. Output only the post text, with no preface and no quotes.`
+const SYSTEM = `You write short, professional social posts for a developer sharing real progress on their own project. Be minimal: plain, calm and specific, in the first person. Use no emojis, no exclamation marks and no hype or filler (never "excited", "thrilled", "game-changer", "just shipped", "journey" or "deep dive"). Lead with what was achieved or what it makes possible, and mention at most three points. Leave out internals a reader cannot use: version numbers, file, function or tool names, bug-hunting chatter, and small visual polish such as spacing or colours; merge related items into one point. Use only facts that are in the updates you are given: never invent dates, timeframes (such as "this week"), numbers, results or plans. Never include secrets, credentials, personal data, client names, file paths or private details; generalise anything that looks private. Output only the post text, with no preface, no quotes and no hashtags unless the task allows them.`
 
 const promptFor = (p: Plat, project: string, items: string[]) => {
   const bullets = items.slice(-20).map(i => `- ${i}`).join('\n')
   const ask =
     p === 'x'
-      ? `Write one X post (max 260 characters, at most 2 hashtags)`
-      : `Write a LinkedIn post (about 80 to 120 words, short paragraphs, at most 3 hashtags at the end)`
-  return `${ask} about progress on the project "${project}". Features and fixes since my last post (each with what was done), oldest first:\n${bullets}`
+      ? `Write one X post of at most 240 characters: one or two plain sentences, no hashtags.`
+      : `Write a LinkedIn post of 50 to 90 words in two or three short paragraphs: the first line says what was achieved, then a line or two on what changed or why it matters, and optionally one closing line. At most two hashtags at the end, or none.`
+  return `${ask} It is about progress on the project "${project}". Features and fixes since my last post (each with what was done), oldest first:\n${bullets}`
+}
+
+/** Cut to at most `max` characters at a sentence end if one is near, else at a word: never mid-word, no ellipsis. */
+const trimTo = (t: string, max: number) => {
+  const chars = Array.from(t)
+  if (chars.length <= max) return t
+  const cut = chars.slice(0, max).join('')
+  const sentence = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('.\n'), cut.lastIndexOf('\n\n'))
+  if (sentence >= max * 0.6) return cut.slice(0, sentence + 1).trim()
+  const space = cut.lastIndexOf(' ')
+  return (space > 0 ? cut.slice(0, space) : cut).trim().replace(/[,;:\-\u2013]+$/, '')
+}
+
+/** Enforce the house style whatever the model did: no emojis or "!", X without hashtags, LinkedIn with at most two. */
+const tidyPost = (p: Plat, raw: unknown) => {
+  let t = block(raw, 4000)
+  // Strip quotes only when they wrap the whole post (a closing quote that belongs to the text stays).
+  const wrapped = t.match(/^(["\u201c'`])([\s\S]*)(["\u201d'`])$/)
+  if (wrapped) t = wrapped[2]!.trim()
+  t = t.replace(/\p{Extended_Pictographic}/gu, '').replace(/[\uFE0F\u200D]/g, '')
+  t = t.replace(/!+/g, '.').replace(/\.\s*\./g, '.')
+  if (p === 'x') {
+    t = t.replace(/(^|\s)#[\p{L}\p{N}_]+/gu, '$1')
+  } else {
+    let n = 0
+    t = t.replace(/(^|\s)(#[\p{L}\p{N}_]+)/gu, (m: string, sp: string) => (++n <= 2 ? m : sp))
+  }
+  t = t.replace(/[ \t]+\n/g, '\n').replace(/ {2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  return trimTo(t, p === 'x' ? 260 : 1000)
 }
 
 /** A plain draft from the update lines, for when the model is unavailable. */
 const fallbackDraft = (p: Plat, project: string, items: string[]) => {
-  const last = items.slice(-4)
+  const last = items.slice(-3)
   return p === 'x'
-    ? block(`Progress on ${project}: ${last.slice(-2).join('; ')}`, 260)
-    : block(`Progress update on ${project}:\n\n${last.map(i => `- ${i}`).join('\n')}`, 1000)
+    ? tidyPost('x', `Progress on ${project}: ${last.slice(-2).join('; ')}.`)
+    : tidyPost('linkedin', `Progress on ${project}:\n\n${last.map(i => `- ${i}`).join('\n')}`)
 }
 
 /** An https compose link, prefilled with the text where it fits (the clipboard always has the text). */
@@ -480,7 +509,7 @@ type IconKind = keyof typeof ICON_BODY
 const iconSvg = (kind: IconKind, color: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON_BODY[kind](color)}</svg>`
 
-const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), feature (a short, stable name, max 50 chars, for the ONE feature, bug fix or task you are working on: keep the SAME name on every turn until it is finished, because ten prompts spent fixing one bug are ONE feature, and use a new name only when you start different work), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The feature is counted and shared as one item however many prompts it took, and the newest done line is added to its notes for the user's progress posts, so make that line a real, specific accomplishment written as one clear sentence (for example "Added login rate limiting"); never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
+const RULES = `A "session brief" is shown to the user above their prompt and goes stale unless you keep it current. At the end of EVERY turn in which you did anything (edited files, ran commands, pushed, answered a question), as your last tool call before your final message, call ${TOOL} with: purpose (max 80 chars: what this session is for), feature (a short, stable name, max 50 chars, for the ONE feature, bug fix or task you are working on: keep the SAME name on every turn until it is finished, because ten prompts spent fixing one bug are ONE feature, and use a new name only when you start different work), and done (exactly 2 strings, max 70 chars each: the two most recent things you COMPLETED, newest first). The feature is counted and shared as one item however many prompts it took, and the newest done line is added to its notes for the user's progress posts, so make that line a real, specific accomplishment written as one clear sentence about the OUTCOME for a user, not an internal detail (for example "Added login rate limiting", not "v0.4.2: tweaked card spacing"), with no version numbers, file or function names, or small visual tweaks; never put questions, waiting states, plans or apologies in done, and keep secrets, credentials, personal data and client names out of it. If nothing new was completed, repeat the previous done lines unchanged. Keep it terse and factual, change purpose only when the goal changes, and do not mention this call in your reply.`
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -830,7 +859,7 @@ export const register: Register = on => {
         const project = projectName(cwd)
         let text = ''
         const r = await $.model.complete({ model: 'haiku', system: SYSTEM, prompt: promptFor(p, project, items), maxTokens: 700 })
-        if (r.isAnswered) text = block(r.text, p === 'x' ? 280 : 1300)
+        if (r.isAnswered) text = tidyPost(p, r.text)
         if (!text) text = fallbackDraft(p, project, names)
         const at = await $.clock.now()
         await commitShare($, st => ({ ...st, drafts: { ...st.drafts, [p]: { text, url: composeUrl(p, text), at } } }))
