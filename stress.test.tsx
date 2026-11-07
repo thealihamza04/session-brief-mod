@@ -338,3 +338,54 @@ test('hover reveal: a wide band needs none', async ($, on) => {
   await setBrief($, { purpose: 'Short', done: ['a', 'b'] })
   for (const r of await bandRows($, 120)) expect(r.reveal).toBeNull()
 })
+
+// ---------- native tooltip (desktop / editor surfaces) ----------
+
+const findAllType = (n: any, type: string, out: any[] = []): any[] => {
+  if (!n || typeof n === 'string') return out
+  if (n.type === type) out.push(n)
+  for (const c of n.children ?? []) findAllType(c, type, out)
+  return out
+}
+
+for (const surface of ['desktop', 'vscode'] as const) {
+  test(`${surface}: a cut line gets a native tooltip (SVG <title>), absolutely placed, no in-flow reveal`, async ($, on) => {
+    await boot($, on)
+    const purpose = 'Purpose with <tags> & "quotes" that is far too long for a narrow band to show in full'
+    await setBrief($, { purpose, done: ['short', 'tiny'] })
+    const ui = await $.ui.mount({ ...BAND(40), surface })
+    const root = await ui.drawn()
+    const svgs = findAllType(root, 'Svg')
+    expect(svgs.length).toBe(1) // only the cut line, not the two short ones
+    const svg = svgs[0]
+    expect(svg.props.isInteractive).toBe(true)
+    expect(svg.props.source).toContain('<title>')
+    expect(svg.props.source).toContain('&lt;tags&gt; &amp; &quot;quotes&quot;') // escaped, cannot inject markup
+    expect(svg.props.source).not.toMatch(/<tags>/)
+    expect(svg.props.alt).toContain('Purpose with') // full text for screen readers
+    // placed absolutely, so it adds no height to the band
+    const boxes = findAllType(root, 'Box').filter((b: any) => b.props?.position === 'absolute')
+    expect(boxes.length).toBe(1)
+    // and no terminal-style hover reveal Box is drawn alongside
+    expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(0)
+    await ui.unmount()
+  })
+}
+
+test('desktop: a wide band draws no tooltip at all', async ($, on) => {
+  await boot($, on)
+  await setBrief($, { purpose: 'Short', done: ['a', 'b'] })
+  const ui = await $.ui.mount({ ...BAND(120), surface: 'desktop' })
+  expect(findAllType(await ui.drawn(), 'Svg').length).toBe(0)
+  await ui.unmount()
+})
+
+test('terminal still uses the in-band hover reveal (no Svg exists there)', async ($, on) => {
+  await boot($, on)
+  await setBrief($, { purpose: 'x'.repeat(200), done: ['a', 'b'] })
+  const ui = await $.ui.mount(BAND(40))
+  const root = await ui.drawn()
+  expect(findAllType(root, 'Svg').length).toBe(0)
+  expect(findAllType(root, 'Box').filter((b: any) => b.props?.display === 'none').length).toBe(1)
+  await ui.unmount()
+})
