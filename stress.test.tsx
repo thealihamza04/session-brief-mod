@@ -735,8 +735,9 @@ test('share: posting on one platform only keeps the badge until both are done; e
   await ui.press({ key: 'posted-linkedin' })
   expect(await unsharedOf(ui)).toBe(3) // X still has all 3
   const card = textAll(shareCard(await ui.drawn()))
-  expect(card).toMatch(/LinkedIn · up to date/)
-  expect(card).toMatch(/X · 3 new/)
+  expect(card).toMatch(/LinkedIn · up to date/) // the one that differs from the header says so
+  expect(card).toMatch(/3 features not shared/)
+  expect(card).not.toMatch(/3 new/) // X equals the header, so it does not repeat it
   await ui.unmount()
 })
 
@@ -1133,7 +1134,7 @@ test('spacing: the card separates its rows (a gap step), so buttons of one row n
   expect(card.props.gap).toBe('sm')
   // status sits right after the name in one Text run (no fixed-width columns to misalign)
   const li = (card.children as any[]).find((c: any) => c.type === 'Box' && textAll(c).startsWith('LinkedIn'))
-  expect(textAll(li)).toMatch(/^LinkedIn · 1 new$/)
+  expect(textAll(li)).toMatch(/^LinkedIn$/) // 1 feature is the header's number: no repeated "1 new"
   await ui.unmount()
 })
 
@@ -1827,5 +1828,67 @@ test('no duplicates: each stat line appears once in the card', async ($, on) => 
   const ui = await $.ui.mount(desk())
   const text = textAll(timeCardOf(await ui.drawn()))
   for (const word of ['active', 'breaks', 'in this chat']) expect((text.match(new RegExp(word, 'g')) ?? []).length).toBe(1)
+  await ui.unmount()
+})
+
+
+// ---------- the share card never repeats its own numbers ----------
+
+const rowText = (card: any, name: string) => textAll((card.children as any[]).find((c: any) => c.type === 'Box' && textAll(c).startsWith(name)))
+
+test('no repeats: when both platforms have the same count, it is said once (the header) and the rows show only names', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 1; i <= 4; i++) await upd($, i)
+  const card = shareCard(await ui.drawn())
+  expect(textAll(card)).toMatch(/4 features not shared/)
+  expect((textAll(card).match(/4/g) ?? []).length).toBe(1) // the number appears exactly once
+  expect(rowText(card, 'LinkedIn')).toBe('LinkedIn')
+  expect(rowText(card, 'X')).toBe('X')
+  await ui.unmount()
+})
+
+test('no repeats: a platform with a different count says its own; a caught-up one says "up to date"', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await upd($, 2)
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-linkedin' }) // LinkedIn is caught up, X is not
+  await clock.advance(MIN)
+  await upd($, 3)
+  await upd($, 4)
+  const card = shareCard(await ui.drawn())
+  expect(textAll(card)).toMatch(/4 features not shared/) // X still has all four
+  expect(rowText(card, 'LinkedIn')).toBe('LinkedIn · 2 new') // differs from the header
+  expect(rowText(card, 'X')).toBe('X') // equals the header: not repeated
+  await ui.unmount()
+})
+
+test('no repeats: everything shared -> the header says "all shared" once and rows are bare names', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-linkedin' })
+  await ui.press({ key: 'posted-x' })
+  const card = shareCard(await ui.drawn())
+  expect((textAll(card).match(/all shared|up to date/g) ?? []).length).toBe(1)
+  expect(textAll(card)).toMatch(/all shared/)
+  expect(rowText(card, 'LinkedIn')).toBe('LinkedIn')
+  await ui.unmount()
+})
+
+test('no repeats: one platform behind and one caught up reads clearly (X up to date, LinkedIn has the count in the header)', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await upd($, 2)
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-x' })
+  const card = shareCard(await ui.drawn())
+  expect(textAll(card)).toMatch(/2 features not shared/)
+  expect(rowText(card, 'X')).toBe('X · up to date')
+  expect(rowText(card, 'LinkedIn')).toBe('LinkedIn')
   await ui.unmount()
 })

@@ -890,8 +890,10 @@ export const register: Register = on => {
                   <Svg source={imgSvg(SHARE_PNG[p], 18)} alt={PLAT_LABEL[p]} width={18} height={18} />
                   <Text>
                     <Text bold>{PLAT_LABEL[p]}</Text>
-                    <Text color="subtle">{' · '}</Text>
-                    <Text color={n === 0 ? 'success' : badgeColor[badgeLevel(n)]}>{n === 0 ? 'up to date' : `${n} new`}</Text>
+                    {/* Never repeat the header: a status only where it says something different from it. */}
+                    {unshared > 0 && n !== unshared ? <Text color="subtle">{' · '}</Text> : null}
+                    {unshared > 0 && n === 0 ? <Text color="success">up to date</Text> : null}
+                    {unshared > 0 && n > 0 && n !== unshared ? <Text color={badgeColor[badgeLevel(n)]}>{`${n} new`}</Text> : null}
                   </Text>
                   <Box flexGrow={1} />
                   {n > 0 && !d ? (

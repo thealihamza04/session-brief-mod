@@ -31,7 +31,7 @@ The glass images are embedded in `hooks/register.tsx` as small PNGs. They were s
 
 A megaphone icon sits right beside the water glass at the start of the right column's first row, with a number when you have updates you haven't shared. It is tinted by how many are waiting (none, a few, several, many). Hover it for the share card:
 
-- **LinkedIn and X rows:** each shows `up to date` or `N new`. **Draft post** asks the model to write a post from your unshared updates (a plain template if the model is unavailable), copies it, and shows an **Open** button that launches your browser on the platform's compose page, prefilled where the platform allows (the desktop app does not open links drawn by a mod, so the mod starts the browser itself with `xdg-open`, `open` or `rundll32`; if that fails, the link is copied instead). Nothing posts until you do. Press **Posted** once you have, and that platform counts as up to date.
+- **LinkedIn and X rows:** the header says once how many features are not shared; a row adds a status only when it differs from that (`up to date` for a platform that is caught up while the other is not, or its own `N new`), so nothing is repeated. **Draft post** asks the model to write a post from your unshared updates (a plain template if the model is unavailable), copies it, and shows an **Open** button that launches your browser on the platform's compose page, prefilled where the platform allows (the desktop app does not open links drawn by a mod, so the mod starts the browser itself with `xdg-open`, `open` or `rundll32`; if that fails, the link is copied instead). Nothing posts until you do. Press **Posted** once you have, and that platform counts as up to date.
 - **GitHub row:** whether your code is pushed (`pushed`, `N commits not pushed`, `N files not committed`, or `no upstream`), read from `git status`. Hidden outside a git repo.
 - **Per project, per feature:** progress is counted by feature, not by prompt: ten prompts spent fixing one bug are one item. Claude names the feature it is working on and keeps that name until it is finished (`set_brief`'s `feature` field), the tracker merges every prompt of that feature into one entry (with what was done as notes), and drafts are written from features. The log and what you have shared are kept per project folder, so work across sessions on one project counts together.
 - **Nudge:** a toast at 3 unshared features, and again every 3 more.
@@ -61,7 +61,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 183 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 187 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .
