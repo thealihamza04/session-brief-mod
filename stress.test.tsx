@@ -33,6 +33,7 @@ type Boot = {
 let opened: string[][] = []
 let copied: string[] = []
 let modelCalls: string[] = []
+let modelSystems: string[] = []
 
 async function boot($: any, on: any, o: Boot = {}) {
   const clock = mock.clock(on, { now: o.now ?? NOW })
@@ -46,6 +47,7 @@ async function boot($: any, on: any, o: Boot = {}) {
   on('tool.register', () => ({ value: { tool: TOOL } }))
   copied = []
   modelCalls = []
+  modelSystems = []
   opened = []
   on('session.cwd', () => ({ value: o.cwd ?? '/work/demo-project' }))
   on('ui.copy', (_: any, e: any) => {
@@ -54,6 +56,7 @@ async function boot($: any, on: any, o: Boot = {}) {
   })
   on('model.complete', (_: any, e: any) => {
     modelCalls.push(String(e.prompt))
+    modelSystems.push(String(e.system ?? ''))
     return o.model == null
       ? { value: { isAnswered: false, reason: 'api-error', usage: {} } }
       : { value: { isAnswered: true, text: o.model, usage: {} } }
@@ -830,6 +833,7 @@ test('share: no draft/posted buttons when nothing is unshared', async ($, on) =>
   const root = await ui.drawn()
   expect(btn(root, 'draft-x')).toBeUndefined()
   expect(btn(root, 'posted-linkedin')).toBeUndefined()
+  expect(findAllType(root, 'Button').filter((b: any) => /draft|open|posted/.test(b.props?.key ?? '')).length).toBe(0)
   expect(textAll(shareCard(root))).toMatch(/all shared/)
   await ui.unmount()
 })
@@ -1057,18 +1061,58 @@ test('open: only https links are ever launched (a tampered stored draft is dropp
   await ui.unmount()
 })
 
-test('layout: each platform is a stacked block (name + status above, buttons below) so nothing wraps', async ($, on) => {
+test('layout: one compact line per platform; buttons depend on state (Draft -> ↻ Open Posted)', async ($, on) => {
+  await boot($, on, { model: 'post', git: '## main...origin/main\n' })
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  const rowOf = (name: string) =>
+    (shareCard(ui_root) .children as any[]).find((c: any) => c.type === 'Box' && textAll(c).startsWith(name))
+  let ui_root = await ui.drawn()
+  // before drafting: only a single "Draft" button on the platform that has news
+  let li = rowOf('LinkedIn')
+  expect(findAllType(li, 'Button').map((b: any) => b.props.label)).toEqual(['Draft', 'Posted']) // you may have posted it yourself
+  await ui.press({ key: 'draft-linkedin' })
+  ui_root = await ui.drawn()
+  li = rowOf('LinkedIn')
+  expect(findAllType(li, 'Button').map((b: any) => b.props.label)).toEqual(['↻', 'Open', 'Posted'])
+  // the row is one Box with the logo, name, status and buttons side by side (no nested stacking)
+  expect((li.children as any[]).some((c: any) => c.type === 'Box' && c.props?.flexDirection === 'column')).toBe(false)
+  // GitHub is one line too, and the footer is a single short line
+  const gh = rowOf('GitHub')
+  expect(findAllType(gh, 'Button').length).toBe(0)
+  expect(textAll(gh)).toMatch(/GitHubpushed · main/)
+  expect(textAll(shareCard(ui_root))).toMatch(/Nothing posts until you do\.$/)
+  await ui.unmount()
+})
+
+test('layout: an up-to-date platform shows no buttons at all', async ($, on) => {
+  await boot($, on)
+  const ui = await $.ui.mount(desk())
+  const card = shareCard(await ui.drawn())
+  for (const name of ['LinkedIn', 'X']) {
+    const row = (card.children as any[]).find((c: any) => c.type === 'Box' && textAll(c).startsWith(name))
+    expect(findAllType(row, 'Button').length).toBe(0)
+  }
+  await ui.unmount()
+})
+
+test('share: the draft prompt forbids invented facts (no made-up timeframes like "this week")', async ($, on) => {
   await boot($, on, { model: 'post' })
   const ui = await $.ui.mount(desk())
   await upd($, 1)
   await ui.press({ key: 'draft-linkedin' })
-  const card = shareCard(await ui.drawn())
-  const blocks = (card.children as any[]).filter((c: any) => c.type === 'Box' && c.props?.flexDirection === 'column')
-  expect(blocks.length).toBe(2) // LinkedIn and X
-  const linkedin = blocks[0]
-  expect(linkedin.children.length).toBe(2) // header row + buttons row
-  expect(textAll(linkedin.children[0])).toMatch(/LinkedIn1 new/)
-  expect(findAllType(linkedin.children[0], 'Button').length).toBe(0) // no buttons beside the name
-  expect(findAllType(linkedin.children[1], 'Button').length).toBe(3) // Redraft, Open, Posted
+  expect(modelSystems.at(-1)).toMatch(/never invent dates, timeframes/)
+  expect(modelSystems.at(-1)).toMatch(/Never include secrets/)
+  await ui.unmount()
+})
+
+test('share: Posted works without drafting first (you wrote the post yourself)', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await upd($, 1)
+  await clock.advance(MIN)
+  await ui.press({ key: 'posted-linkedin' })
+  await ui.press({ key: 'posted-x' })
+  expect(await unsharedOf(ui)).toBe(0)
   await ui.unmount()
 })

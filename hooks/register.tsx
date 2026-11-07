@@ -242,7 +242,7 @@ const unsharedAny = (s: Share) => s.log.filter(e => e.at > Math.min(s.shared.lin
 const badgeLevel = (n: number) => (n <= 0 ? 0 : n < NUDGE_AT ? 1 : n < NUDGE_AT * 2 ? 2 : 3)
 const badgeColor = ['subtle', 'suggestion', 'warning', 'error'] as const
 
-const SYSTEM = `You write short social posts for a developer sharing progress on their own project. First person, plain and specific, no hype or buzzwords. Never include secrets, credentials, personal data, client names, file paths or private details; generalise anything that looks private. Output only the post text, with no preface and no quotes.`
+const SYSTEM = `You write short social posts for a developer sharing progress on their own project. First person, plain and specific, no hype or buzzwords. Use only facts that are in the updates you are given: never invent dates, timeframes (such as "this week"), numbers, results or plans. Never include secrets, credentials, personal data, client names, file paths or private details; generalise anything that looks private. Output only the post text, with no preface and no quotes.`
 
 const promptFor = (p: Plat, project: string, items: string[]) => {
   const bullets = items.slice(-20).map(i => `- ${i}`).join('\n')
@@ -673,7 +673,7 @@ export const register: Register = on => {
       Svg ? (
         <Box key="share">
           <Svg source={imgSvg(SHARE_PNG[`mega${lvl}` as 'mega0'], 22)} alt={`Share progress: ${unshared} updates not shared`} width={22} height={22} />
-          <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }} flexDirection="column" gap={1}>
+          <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }} flexDirection="column">
             <Box gap={1}>
               <Text bold>Share your progress</Text>
               <Text color={unshared === 0 ? 'success' : badgeColor[lvl]}>{unshared === 0 ? 'all shared' : `${unshared} not shared`}</Text>
@@ -681,34 +681,43 @@ export const register: Register = on => {
             {PLATS.map(p => {
               const n = unsharedFor(sh, p).length
               const d = sh.drafts[p]
+              // One compact line: logo, name, status, then only the buttons this state needs.
               return (
-                <Box flexDirection="column">
-                  <Box gap={1} alignItems="center">
-                    <Svg source={imgSvg(SHARE_PNG[p], 18)} alt={PLAT_LABEL[p]} width={18} height={18} />
+                <Box gap={1} alignItems="center">
+                  <Svg source={imgSvg(SHARE_PNG[p], 18)} alt={PLAT_LABEL[p]} width={18} height={18} />
+                  <Box width={9}>
                     <Text bold>{PLAT_LABEL[p]}</Text>
+                  </Box>
+                  <Box width={10}>
                     <Text color={n === 0 ? 'success' : badgeColor[badgeLevel(n)]}>{n === 0 ? 'up to date' : `${n} new`}</Text>
                   </Box>
-                  {n > 0 || d ? (
-                    <Box gap={1} alignItems="center">
-                      {n > 0 ? (
-                        <Button key={`draft-${p}`} label={sh.drafting === p ? 'Drafting…' : d ? 'Redraft' : 'Draft post'} onPress={() => draftFor(p)} />
-                      ) : null}
-                      {d ? <Button key={`open-${p}`} label="Open" onPress={() => openFor(p)} /> : null}
-                      <Button key={`posted-${p}`} label="Posted" onPress={() => postedFor(p)} />
-                    </Box>
+                  <Box flexGrow={1} />
+                  {n > 0 && !d ? (
+                    <Button key={`draft-${p}`} label={sh.drafting === p ? 'Drafting…' : 'Draft'} onPress={() => draftFor(p)} />
                   ) : null}
+                  {d ? (
+                    <Button key={`draft-${p}`} label={sh.drafting === p ? '…' : '↻'} onPress={() => draftFor(p)} />
+                  ) : null}
+                  {d ? <Button key={`open-${p}`} label="Open" onPress={() => openFor(p)} /> : null}
+                  {n > 0 || d ? <Button key={`posted-${p}`} label="Posted" onPress={() => postedFor(p)} /> : null}
                 </Box>
               )
             })}
             {gh.kind !== 'none' ? (
               <Box gap={1} alignItems="center">
                 <Svg source={imgSvg(SHARE_PNG.github, 18)} alt="GitHub" width={18} height={18} />
-                <Text bold>GitHub</Text>
-                <Text color={gh.kind === 'clean' ? 'success' : 'warning'}>{ghText}</Text>
-                {gh.branch ? <Text color="subtle">{gh.branch}</Text> : null}
+                <Box width={9}>
+                  <Text bold>GitHub</Text>
+                </Box>
+                <Text wrap="truncate-end">
+                  <Text color={gh.kind === 'clean' ? 'success' : 'warning'}>{ghText}</Text>
+                  {gh.branch ? <Text color="subtle">{` · ${gh.branch}`}</Text> : null}
+                </Text>
               </Box>
             ) : null}
-            <Text color="subtle">AI drafts from your updates. Nothing posts until you do.</Text>
+            <Text color="subtle" wrap="truncate-end">
+              Nothing posts until you do.
+            </Text>
           </Box>
         </Box>
       ) : null
