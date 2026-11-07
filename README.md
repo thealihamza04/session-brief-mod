@@ -26,6 +26,7 @@ The first row's chip is your current focus stretch (it restarts after a 30-minut
 - **Breaks:** idle time inside the period.
 - **Started:** when the period began.
 - **This chat:** active time in this session only. Periods are shared by all sessions; each chat also keeps its own.
+- **Work sessions:** every stretch between breaks in this period, oldest first, with its start time and length (`1:00 PM · 1h 21m`, `4:25 PM · 40m 12s · now`). Seconds show under an hour. The six latest are listed, with `+N earlier` for the rest.
 
 ## Water glass
 
@@ -67,7 +68,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 134 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 151 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

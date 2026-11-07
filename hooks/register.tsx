@@ -31,7 +31,8 @@ const tokens = atom({ plugin: 'session-brief', key: 'tokens' } as const, 0)
 // A gap longer than this starts a new working period (breaks inside a period are counted, not reset).
 const PERIOD_GAP_MS = 4 * 60 * 60 * 1000
 
-const emptyMeter = (): Meter => ({ startedAt: 0, lastActive: 0, active: 0, idle: 0, inTurn: false })
+const MAX_RUNS = 40
+const emptyMeter = (): Meter => ({ startedAt: 0, lastActive: 0, active: 0, idle: 0, inTurn: false, runs: [] })
 // The working period is shared by every session; `sess` is this chat's own active time.
 const period = atom({ plugin: 'session-brief', key: 'period' } as const, emptyMeter())
 const sess = atom({ plugin: 'session-brief', key: 'sess' } as const, emptyMeter())
@@ -198,27 +199,49 @@ const asStretch = (x: unknown): Stretch | null => {
 }
 
 const asMeter = (x: unknown): Meter => {
-  const o = x as Partial<Record<keyof Meter, unknown>> | null
-  return { startedAt: num(o?.startedAt), lastActive: num(o?.lastActive), active: num(o?.active), idle: num(o?.idle), inTurn: o?.inTurn === true }
+  const o = x as (Partial<Record<keyof Meter, unknown>> & { runs?: unknown }) | null
+  const runs = (Array.isArray(o?.runs) ? (o.runs as unknown[]) : [])
+    .map(r => ({ start: num((r as { start?: unknown })?.start), end: num((r as { end?: unknown })?.end) }))
+    .filter(r => r.start > 0 && r.end >= r.start)
+    .slice(-MAX_RUNS)
+  return { startedAt: num(o?.startedAt), lastActive: num(o?.lastActive), active: num(o?.active), idle: num(o?.idle), inTurn: o?.inTurn === true, runs }
 }
 
 /**
  * Count the time since the last activity as active (a short gap, or a turn in progress) or idle
- * (a long gap), then make now the last activity. `resetAfter` starts a fresh meter after a very long gap.
+ * (a long gap), then make now the last activity. A short gap extends the current work session; a
+ * long one closes it and opens the next. `resetAfter` starts a fresh meter after a very long gap.
  */
 const tickMeter = (m: Meter, now: number, kind: 'prompt' | 'done', resetAfter = 0): Meter => {
   if (!m.startedAt || (resetAfter > 0 && now - m.lastActive > resetAfter)) {
-    return { startedAt: now, lastActive: now, active: 0, idle: 0, inTurn: kind === 'prompt' }
+    return { startedAt: now, lastActive: now, active: 0, idle: 0, inTurn: kind === 'prompt', runs: [{ start: now, end: now }] }
   }
   const d = Math.max(0, now - m.lastActive)
   const isActive = m.inTurn || d <= BREAK_MS
+  // A store from before sessions were listed has no runs: start with one covering what we know.
+  const runs = m.runs.length ? [...m.runs] : [{ start: m.startedAt, end: Math.max(m.startedAt, m.lastActive) }]
+  const last = runs[runs.length - 1]!
+  if (isActive) runs[runs.length - 1] = { start: last.start, end: Math.max(last.end, now) }
+  else runs.push({ start: now, end: now })
   return {
     ...m,
     active: m.active + (isActive ? d : 0),
     idle: m.idle + (isActive ? 0 : d),
     lastActive: Math.max(m.lastActive, now),
     inTurn: kind === 'prompt',
+    runs: runs.slice(-MAX_RUNS),
   }
+}
+
+/** 45s, 40m 12s, 1h 25m: seconds while it is under an hour, as asked. */
+const fmtDur = (ms: number) => {
+  const t = Math.max(0, Math.floor(num(ms) / 1000))
+  const h = Math.floor(t / 3600)
+  const m = Math.floor((t % 3600) / 60)
+  const sec = t % 60
+  if (h > 0) return `${h}h ${pad2(m)}m`
+  if (m > 0) return `${m}m ${sec}s`
+  return `${sec}s`
 }
 
 /** Today -> "6:58 PM", yesterday -> "yest 6:58 PM", older -> "Nov 6 6:58 PM". */
@@ -653,6 +676,15 @@ export const register: Register = on => {
       ['Started', dayTime(periodStart, now), 'text'],
       ['This chat', `${fmt(se.active)} active`, 'text'],
     ]
+    // Work sessions of this period: each stretch between breaks, with its start and length.
+    const known = per.runs.length ? per.runs : periodStart ? [{ start: periodStart, end: Math.max(periodStart, lastActive) }] : []
+    const runList = known.map((r, i) => {
+      const live = i === known.length - 1 && !isIdle
+      const start = Math.min(r.start, now)
+      return { start, len: Math.max(0, (live ? Math.max(r.end, now) : Math.min(r.end, now)) - start), live }
+    })
+    const shownRuns = runList.slice(-6)
+    const earlierRuns = runList.length - shownRuns.length
     const timeCard: Seg[] = Svg ? [{ t: '', card: 'time' }] : []
     // Only surfaces that draw the card make the time texts hover triggers.
     const ts = Svg ? 'time' : undefined
@@ -813,6 +845,15 @@ export const register: Register = on => {
               <Text>
                 <Text color="subtle">{`${k} · `}</Text>
                 <Text color={c} bold>{v}</Text>
+              </Text>
+            ))}
+            <Text bold>Work sessions</Text>
+            {earlierRuns > 0 ? <Text color="subtle">{`+${earlierRuns} earlier`}</Text> : null}
+            {shownRuns.map(r => (
+              <Text>
+                <Text color="subtle">{`${dayTime(r.start, now)} · `}</Text>
+                <Text color={r.live ? 'suggestion' : 'text'} bold>{fmtDur(r.len)}</Text>
+                {r.live ? <Text color="subtle">{' · now'}</Text> : null}
               </Text>
             ))}
           </Box>

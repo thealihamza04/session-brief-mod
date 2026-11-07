@@ -54,6 +54,8 @@ export type Meter = {
   idle: number
   /** a turn is running: the time until it completes counts as active */
   inTurn: boolean
+  /** each work session (a stretch between breaks), oldest first, capped */
+  runs: { start: number; end: number }[]
 }
 
 export type Water = {

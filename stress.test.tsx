@@ -1305,3 +1305,140 @@ test('time card: idle state says so, and the since line keeps the original start
   expect(await cardText(ui)).toMatch(/Now · idle 1h30m/)
   await ui.unmount()
 })
+
+// ====================================================================
+// work sessions list in the time card
+// ====================================================================
+
+const SEC = 1000
+const run = async ($: any, clock: any, lengthMs: number) => {
+  await submit($)
+  await clock.advance(lengthMs)
+  await finish($)
+}
+
+test('sessions: the user scenario lists the 1h 21m session and the live 10m session', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 0; i < 17; i++) {
+    await submit($)
+    await clock.advance(MIN)
+    await finish($)
+    await clock.advance(4 * MIN)
+  }
+  await clock.advance(120 * MIN)
+  await run($, clock, 10 * MIN)
+  const card = await cardText(ui)
+  expect(card).toMatch(/Work sessions/)
+  expect(card).toMatch(/1:00 PM · 1h 21m/)
+  expect(card).toMatch(/4:25 PM · 10m 0s · now/)
+  expect(card.indexOf('1:00 PM · 1h 21m')).toBeLessThan(card.indexOf('4:25 PM'))
+  await ui.unmount()
+})
+
+for (const [label, len, re] of [
+  ['45s', 45 * SEC, /1:00 PM · 45s/],
+  ['40m 12s', 40 * MIN + 12 * SEC, /1:00 PM · 40m 12s/],
+  ['59m 59s', 59 * MIN + 59 * SEC, /1:00 PM · 59m 59s/],
+  ['1h 00m', HOUR, /1:00 PM · 1h 00m/],
+  ['3h 07m', 3 * HOUR + 7 * MIN, /1:00 PM · 3h 07m/],
+] as const) {
+  test(`sessions: a ${label} session reads "${label}" (seconds under an hour, hours above)`, async ($, on) => {
+    const clock = await boot($, on)
+    const ui = await $.ui.mount(desk())
+    await run($, clock, len)
+    expect(await cardText(ui)).toMatch(re)
+    await ui.unmount()
+  })
+}
+
+test('sessions: three sessions with breaks between are listed in order, each with its own start and length', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await run($, clock, 30 * MIN) // 1:00 PM, 30m 0s
+  await clock.advance(40 * MIN)
+  await run($, clock, 40 * MIN + 12 * SEC) // 2:10 PM, 40m 12s
+  await clock.advance(60 * MIN)
+  await run($, clock, 5 * MIN) // 3:50 PM, 5m 0s
+  const card = await cardText(ui)
+  const a = card.indexOf('1:00 PM · 30m 0s')
+  const b = card.indexOf('2:10 PM · 40m 12s')
+  const c = card.indexOf('3:50 PM · 5m 0s')
+  expect(a).toBeGreaterThanOrEqual(0)
+  expect(b).toBeGreaterThan(a)
+  expect(c).toBeGreaterThan(b)
+  expect(card).toMatch(/3:50 PM · 5m 0s · now/) // only the latest is live
+  expect(card).not.toMatch(/2:10 PM · 40m 12s · now/)
+  expect(card).toMatch(/Breaks · 1h 40m|Breaks · 1h40m/) // 40m + 60m idle
+  await ui.unmount()
+})
+
+test('sessions: only the six latest are listed, with "+N earlier" for the rest', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  for (let i = 0; i < 9; i++) {
+    await run($, clock, MIN)
+    await clock.advance(40 * MIN)
+  }
+  const card = await cardText(ui)
+  expect(card).toMatch(/\+3 earlier/)
+  expect((card.match(/ · 1m 0s/g) ?? []).length).toBe(6)
+  await ui.unmount()
+})
+
+test('sessions: after a break that ends the work (idle now), the last session is not marked "now"', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await run($, clock, 20 * MIN)
+  await clock.advance(90 * MIN)
+  const card = await cardText(ui)
+  expect(card).toMatch(/1:00 PM · 20m 0s/)
+  expect(card).not.toMatch(/· now/)
+  await ui.unmount()
+})
+
+test('sessions: a gap of 4+ hours starts a new period, so the list starts over', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await run($, clock, 10 * MIN)
+  await clock.advance(5 * HOUR)
+  await run($, clock, 3 * MIN)
+  const card = await cardText(ui)
+  expect(card).not.toMatch(/1:00 PM · 10m 0s/)
+  expect(card).toMatch(/6:10 PM · 3m 0s · now/)
+  await ui.unmount()
+})
+
+test('sessions: a stored period from an older version (no list) shows one session from its start', async ($, on) => {
+  await boot($, on, { store: { period: { startedAt: NOW - 2 * HOUR, lastActive: NOW - 2 * MIN, active: 90 * MIN, idle: 0 } } })
+  const ui = await $.ui.mount(desk())
+  expect(await cardText(ui)).toMatch(/11:00 AM · 2h 00m · now/) // live: counted through now
+  await ui.unmount()
+})
+
+for (const [name, runs] of [
+  ['strings and junk', ['a', 1, null, { start: 'x' }]],
+  ['end before start', [{ start: NOW - MIN, end: NOW - HOUR }]],
+  ['NaN and negatives', [{ start: NaN, end: NaN }, { start: -5, end: -1 }]],
+  ['1000 entries', Array.from({ length: 1000 }, (_, i) => ({ start: NOW - 2000 * MIN + i * 1000, end: NOW - 2000 * MIN + i * 1000 + 500 }))],
+  ['runs in the future', [{ start: NOW + HOUR, end: NOW + 2 * HOUR }]],
+] as const) {
+  test(`sessions: corrupt list (${name}) never shows junk`, async ($, on) => {
+    await boot($, on, { store: { period: { startedAt: NOW - HOUR, lastActive: NOW - MIN, active: HOUR, idle: 0, runs: runs as any } } })
+    const ui = await $.ui.mount(desk())
+    const card = await cardText(ui)
+    expect(card).not.toMatch(/NaN|Infinity|undefined|\[object|-\d/)
+    expect((card.match(/ · \d/g) ?? []).length).toBeLessThan(40)
+    await ui.unmount()
+  })
+}
+
+test('sessions: the list is on the time card only; the band rows themselves stay compact', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(desk())
+  await run($, clock, 5 * MIN)
+  const rs = await rows(ui)
+  expect(rs[0].right + rs[1].right + rs[2].right).not.toMatch(/Work sessions/)
+  expect(await cardText(ui)).toMatch(/Work sessions/)
+  await ui.unmount()
+})
