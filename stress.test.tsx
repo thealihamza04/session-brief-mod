@@ -540,7 +540,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
     expect(sources[0]).not.toBe(sources.at(-1))
     // no label text leaks onto the band at rest (the old "Water glass: click to refill" bug)
     const visible = textOf(await ui.drawn())
-    expect(visible).not.toMatch(/Water glass|click to refill|Refill/)
+    expect(visible).not.toMatch(/Water glass|click to refill|Refill|I drank|empty in/)
     await ui.unmount()
   })
 
@@ -551,7 +551,8 @@ for (const surface of ['desktop', 'vscode'] as const) {
     const before = iconOf(await ui.drawn()).props.source
     const card = findAllType(await ui.drawn(), 'Box').find((b: any) => b.props?.display === 'none' && findAllType(b, 'Button').length)
     expect(card).toBeTruthy()
-    expect(textAll(card)).toMatch(/Water is empty/)
+    expect(textAll(card)).toMatch(/Empty. Time for water/)
+    expect(findAllType(card, 'Button')[0].props.label).toBe('I drank')
     await ui.press({ key: 'water' })
     const after = iconOf(await ui.drawn()).props.source
     expect(after).not.toBe(before) // back to the full glass
@@ -559,3 +560,14 @@ for (const surface of ['desktop', 'vscode'] as const) {
     await ui.unmount()
   })
 }
+
+test('desktop hover card is one compact line: percent, time left, short button; no inverse white box', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount({ ...BAND(100), surface: 'desktop' })
+  await clock.advance(5 * MIN)
+  const card = findAllType(await ui.drawn(), 'Box').find((b: any) => b.props?.display === 'none' && findAllType(b, 'Button').length)!
+  expect(textAll(card)).toMatch(/^8\d% · empty in 4\dm$/) // e.g. "89% · empty in 40m", nothing else
+  expect(findAllType(card, 'Button')[0].props.label).toBe('Refill')
+  expect(findAllType(card, 'Text').some((n: any) => n.props?.inverse)).toBe(false)
+  await ui.unmount()
+})

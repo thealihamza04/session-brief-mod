@@ -17,7 +17,7 @@ Each line is color-coded with the terminal theme's own colors: `◎` purpose (bl
 
 ## Water glass
 
-A small glass icon sits at the start of the right column's first row and drains over 45 minutes through five levels: full, three quarters, half, low, empty. On the desktop app and editor it is an image (a filled glass and an empty glass, with the water cut to each level); in the terminal it is drawn with block characters (`▕█▏` ... `▕ ▏`). Hover the glass for a card with the level and time left; on the desktop the card also has a **Refill glass** button (in the terminal, click the glass itself). The level is shared by all your sessions. When it is empty you get a toast once, then again every 15 minutes while you keep working, and none while you are away (30+ minutes without activity). Change `DRAIN_MS` in `hooks/register.tsx` to drain faster or slower.
+A small glass icon sits at the start of the right column's first row and drains over 45 minutes through five levels: full, three quarters, half, low, empty. On the desktop app and editor it is an image (a filled glass and an empty glass, with the water cut to each level); in the terminal it is drawn with block characters (`▕█▏` ... `▕ ▏`). Hover the glass for a card with the level and time left; on the desktop the card is one compact line (`89% · empty in 40m`) with a **Refill** button (**I drank** when empty) (in the terminal, click the glass itself). The level is shared by all your sessions. When it is empty you get a toast once, then again every 15 minutes while you keep working, and none while you are away (30+ minutes without activity). Change `DRAIN_MS` in `hooks/register.tsx` to drain faster or slower.
 
 The glass images are embedded in `hooks/register.tsx` as small PNGs. They were supplied by the mod's author; check the icons' licenses before redistributing or swap in your own.
 
@@ -44,7 +44,7 @@ Answer `y` to add the marketplace, then pick the user scope so it loads in every
 
 ## Tests
 
-`stress.test.tsx` holds 68 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
+`stress.test.tsx` holds 69 edge-case tests (months-long uptimes, clock set backwards, corrupt saved data, 5 MB and hostile text, tiny terminals, wide emoji/CJK, 200 parallel `set_brief` calls, absurd token totals). Run them with:
 
 ```bash
 claude plugin test .

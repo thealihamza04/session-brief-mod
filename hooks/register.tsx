@@ -416,9 +416,18 @@ export const register: Register = on => {
             // Desktop / editor / mobile: the glass is an image; the card (absolute, so no height) holds the info and the button.
             <Box key="glass">
               <Svg source={glassSvg(level)} alt={`Water glass, ${Math.round(level * 100)}% full`} width={22} height={22} />
-              <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }}>
-                <Text inverse>{` ${waterTip} `}</Text>
-                <Button key="water" label={level <= 0 ? 'Drink and refill' : 'Refill glass'} onPress={refill} />
+              <Box position="absolute" top={0} right={2} display="none" hover={{ display: 'flex' }} gap={1} alignItems="center">
+                {level <= 0 ? (
+                  <Text color="error" bold wrap="truncate-end">
+                    Empty. Time for water!
+                  </Text>
+                ) : (
+                  <Text wrap="truncate-end">
+                    <Text color={glassColor(level)} bold>{`${Math.round(level * 100)}%`}</Text>
+                    <Text color="subtle">{` · empty in ${leftMin}m`}</Text>
+                  </Text>
+                )}
+                <Button key="water" label={level <= 0 ? 'I drank' : 'Refill'} onPress={refill} />
               </Box>
             </Box>
           ) : (
