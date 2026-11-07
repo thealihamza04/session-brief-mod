@@ -1,5 +1,7 @@
 # session-brief
 
+![session-brief above the Claude Code prompt: purpose, last two wins, water glass, share megaphone, work timer](docs/screenshot.webp)
+
 A Claude Code mod that draws three dim lines above the prompt:
 
 ```
