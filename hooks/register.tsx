@@ -570,6 +570,13 @@ export const register: Register = on => {
         now,
       })),
     )
+    // Another session may have refilled the shared glass: pick it up within seconds.
+    $.clock.every(5000, async () => {
+      await safely(async () => {
+        const stored = num(((await $.store.get('water')) as { lastDrink?: unknown } | undefined)?.lastDrink)
+        if (stored && stored !== (await read($, water)).lastDrink) await update($, water, () => ({ lastDrink: stored }))
+      })
+    })
     let tick = 0
     $.clock.every(30000, async () => {
       tick += 1

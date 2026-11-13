@@ -29,6 +29,7 @@ type Boot = {
   model?: string | null // reply of model.complete; null = the model is unavailable
   os?: 'Linux' | 'Darwin' | 'Windows' // what `uname` says (Windows has no uname)
   openFails?: boolean // the browser launcher exits non-zero
+  live?: Record<string, unknown> // a store the test can change mid-run, as another session would
 }
 let opened: string[][] = []
 let registered: any = null
@@ -38,7 +39,13 @@ let modelSystems: string[] = []
 
 async function boot($: any, on: any, o: Boot = {}) {
   const clock = mock.clock(on, { now: o.now ?? NOW })
-  mock.store(on, o.store ?? {})
+  if (o.live) {
+    const live = o.live
+    on('store.get', (_: any, e: any) => ({ value: live[e.key] }))
+    on('store.set', (_: any, e: any) => ((live[e.key] = e.value), { value: undefined }))
+    on('store.delete', (_: any, e: any) => (delete live[e.key], { value: undefined }))
+    on('store.keys', () => ({ value: Object.keys(live) }))
+  } else mock.store(on, o.store ?? {})
   toasts = []
   on('ui.toast', (_: any, e: any) => {
     toasts.push(String(e.text ?? ''))
@@ -2017,4 +2024,15 @@ test('rules: the brief rule asks for outcome-style done lines (no versions, file
   expect(text).toMatch(/OUTCOME for a user, not an internal detail/)
   expect(text).toMatch(/no version numbers, file or function names, or small visual tweaks/)
   expect(text).toMatch(/ten prompts spent fixing one bug are ONE feature/) // the feature rule is still there
+})
+
+// ---------- the water glass is shared by every session ----------
+
+test('a refill in another session shows here within seconds', async ($, on) => {
+  const live: Record<string, unknown> = { water: { lastDrink: NOW - 10 * DAY } }
+  const clock = await boot($, on, { live })
+  expect((await band($, 80))[0]).toMatch(/▕ ▏/) // empty
+  live.water = { lastDrink: NOW } // another session pressed Refill
+  await clock.set(NOW + 6000)
+  expect((await band($, 80))[0]).toMatch(/▕█▏/) // full here too, with no restart
 })
