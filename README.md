@@ -1,6 +1,6 @@
 # session-brief
 
-![Demo: the session-brief band above the Claude Code prompt, the water glass card with its refill button, the share card, and a drafted post opened in X](docs/demo.gif)
+![Demo: the session-brief band above the Claude Code prompt, and the water glass card with its refill button](docs/demo.gif)
 
 A Claude Code mod that draws three dim lines above the prompt:
 
@@ -26,19 +26,6 @@ The first row's chip is your current focus stretch (it restarts after a 30-minut
 A small glass icon sits at the start of the right column's first row and drains over 45 minutes through five levels: full, three quarters, half, low, empty. On the desktop app and editor it is an image (a filled glass and an empty glass, with the water cut to each level); in the terminal it is drawn with block characters (`▕█▏` ... `▕ ▏`). Hover the glass for a card with the level and time left; on the desktop the card is one compact line (`89% · empty in 40m`) with a **Refill** button (**I drank** when empty) (in the terminal, click the glass itself). The level is shared by all your sessions. When it is empty you get a toast once, then again every 15 minutes while you keep working, and none while you are away (30+ minutes without activity). Change `DRAIN_MS` in `hooks/register.tsx` to drain faster or slower.
 
 The glass images are embedded in `hooks/register.tsx` as small PNGs. They were supplied by the mod's author; check the icons' licenses before redistributing or swap in your own.
-
-## Share your progress (desktop app and editor)
-
-A megaphone icon sits right beside the water glass at the start of the right column's first row, with a number when you have updates you haven't shared. It is tinted by how many are waiting (none, a few, several, many). Hover it for the share card:
-
-- **LinkedIn and X rows:** the header says once how many features are not shared; a row adds a status only when it differs from that (`up to date` for a platform that is caught up while the other is not, or its own `N new`), so nothing is repeated. **Draft post** asks the model to write a post from your unshared updates (a plain template if the model is unavailable), copies it, and shows an **Open** button that launches your browser on the platform's compose page, prefilled where the platform allows (the desktop app does not open links drawn by a mod, so the mod starts the browser itself with `xdg-open`, `open` or `rundll32`; if that fails, the link is copied instead). Nothing posts until you do. Press **Posted** once you have, and that platform counts as up to date.
-- **GitHub row:** whether your code is pushed (`pushed`, `N commits not pushed`, `N files not committed`, or `no upstream`), read from `git status`. Hidden outside a git repo.
-- **Per project, per feature:** progress is counted by feature, not by prompt: ten prompts spent fixing one bug are one item. Claude names the feature it is working on and keeps that name until it is finished (`set_brief`'s `feature` field), the tracker merges every prompt of that feature into one entry (with what was done as notes), and drafts are written from features. The log and what you have shared are kept per project folder, so work across sessions on one project counts together.
-- **Nudge:** a toast at 3 unshared features, and again every 3 more.
-
-**Post style: professional and minimal.** The model is told to write plainly and calmly in the first person, lead with the outcome, mention at most three points, and leave out version numbers, file and tool names, bug-hunting chatter and small visual polish. The code enforces the basics whatever the model does: no emojis or exclamation marks, no hashtags on X, at most two on LinkedIn, wrapping quotes removed, X cut at a sentence end under 260 characters and LinkedIn under 1000. The plain template used when the model is unavailable follows the same rules. Claude is also asked to write each `done` line as an outcome for a user, since the post is built from them.
-
-Each `set_brief` call adds its newest "done" line to the current feature's notes, so keep those lines specific and free of private details; drafts are AI-written from the features and you review before posting. If a call names no feature, the progress joins the latest feature when it is recent (within 45 minutes), otherwise it starts a new one. Logs from older versions (one entry per prompt) are grouped into features by time on load.
 
 ## Install
 

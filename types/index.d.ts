@@ -16,43 +16,6 @@ export type ChatTimer = {
   now: number
 }
 
-export type Draft = {
-  /** the post text (AI-written, or a plain template if the model was unavailable) */
-  text: string
-  /** an https compose link prefilled with the text where the platform allows it */
-  url: string
-  at: number
-}
-
-export type Feature = {
-  /** a short, stable name for the piece of work (the same across all the prompts that built it) */
-  name: string
-  firstAt: number
-  /** last time progress was recorded on it: what "unshared" is measured by */
-  lastAt: number
-  /** what was done, newest last (deduped, capped): the raw material for the post */
-  notes: string[]
-}
-
-export type Share = {
-  /** the features / fixes / tasks of this project, oldest first (capped). Many prompts on one feature are ONE entry. */
-  log: Feature[]
-  /** ms epoch the user last marked a post as shared, per platform (0 = never) */
-  shared: { linkedin: number; x: number }
-  drafts: { linkedin?: Draft; x?: Draft }
-  /** the unshared-update count we last nudged at */
-  nudged: number
-  /** a draft is being written for this platform right now */
-  drafting: '' | 'linkedin' | 'x'
-}
-
-export type Git = {
-  kind: 'none' | 'clean' | 'ahead' | 'dirty' | 'noup'
-  ahead: number
-  dirty: number
-  branch: string
-}
-
 /** Time accounting: active vs idle, from activity events (prompts and finished turns). */
 export type Meter = {
   /** ms epoch of the first activity (0 = none yet) */
@@ -75,6 +38,6 @@ export type Water = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number; water: Water; share: Share; git: Git; period: Meter; sess: Meter }
+    'session-brief': { brief: Brief; timer: ChatTimer; tokens: number; water: Water; period: Meter; sess: Meter }
   }
 }
