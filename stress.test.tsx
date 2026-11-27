@@ -426,31 +426,42 @@ test('water: drains over time, never refills by itself', async ($, on) => {
   const clock = await boot($, on)
   const ui = await $.ui.mount(BAND(100))
   const seen: string[] = []
-  for (const m of [0, 12, 12, 12, 12]) {
+  for (const m of [0, 27, 27, 27, 27]) {
     await clock.advance(m * MIN)
     seen.push(glassOf((await rows(ui))[0]))
   }
   const order = ' ▂▄▆█'
   for (let i = 1; i < seen.length; i++) expect(order.indexOf(seen[i]!)).toBeLessThanOrEqual(order.indexOf(seen[i - 1]!))
   expect(seen[0]).toBe('█')
-  expect(seen.at(-1)).toBe(' ') // 48 minutes: empty glass
+  expect(seen.at(-1)).toBe(' ') // 108 minutes: empty glass
   await ui.unmount()
 })
 
 test('water: empty glass shows the drink-water chip and nags once while you work', async ($, on) => {
   const clock = await boot($, on)
   await $.prompt.submit({ text: 'hi' })
-  await clock.advance(40 * MIN)
+  await clock.advance(100 * MIN)
   await $.prompt.submit({ text: 'still here' }) // keeps you "working"
   const ui = await $.ui.mount(BAND(100))
   expect(toasts.filter(t => /water/i.test(t)).length).toBe(0)
-  await clock.advance(6 * MIN) // 46 minutes: empty
+  await clock.advance(6 * MIN) // 106 minutes: empty
   const r = (await rows(ui))[0]
   expect(glassOf(r)).toBe(' ')
   expect(r.tip).toMatch(/empty|drink/i)
   expect(toasts.filter(t => /water/i.test(t)).length).toBe(1)
   await clock.advance(5 * MIN) // still empty: no second nag yet (every 15 min)
   expect(toasts.filter(t => /water/i.test(t)).length).toBe(1)
+  await ui.unmount()
+})
+
+test('water: the glass lasts 1 hour 45 minutes (not empty at 1h44m, empty at 1h45m)', async ($, on) => {
+  const clock = await boot($, on)
+  const ui = await $.ui.mount(BAND(100))
+  await clock.advance(104 * MIN)
+  expect(glassOf((await rows(ui))[0])).not.toBe(' ')
+  expect((await rows(ui))[0].tip).toMatch(/empty in 1m/)
+  await clock.advance(MIN)
+  expect(glassOf((await rows(ui))[0])).toBe(' ')
   await ui.unmount()
 })
 
@@ -464,7 +475,7 @@ test('water: no nag while you are away (no activity for 30+ minutes)', async ($,
 test('water: pressing the glass refills it', async ($, on) => {
   const clock = await boot($, on)
   const ui = await $.ui.mount(BAND(100))
-  await clock.advance(50 * MIN)
+  await clock.advance(110 * MIN)
   expect(glassOf((await rows(ui))[0])).toBe(' ')
   await ui.press({ key: 'water' })
   const r = (await rows(ui))[0]
@@ -475,7 +486,7 @@ test('water: pressing the glass refills it', async ($, on) => {
 })
 
 test('water: a refill survives a restart (stored)', async ($, on) => {
-  await boot($, on, { store: { water: { lastDrink: NOW - 50 * MIN } } })
+  await boot($, on, { store: { water: { lastDrink: NOW - 110 * MIN } } })
   expect(glassOf((await bandRows($, 100))[0])).toBe(' ') // empty since 5 minutes ago
 })
 
@@ -507,11 +518,11 @@ test('water: hover card carries the level, time left and the refill hint; nothin
   const clock = await boot($, on)
   const ui = await $.ui.mount(BAND(100))
   let r = (await rows(ui))[0]
-  expect(r.tip).toMatch(/Water 100% · empty in 45m · click the glass to refill/) // terminal wording
+  expect(r.tip).toMatch(/Water 100% · empty in 1h45m · click the glass to refill/) // terminal wording
   expect(r.right).not.toMatch(/Water|click/) // at rest only the icon shows
-  await clock.advance(23 * MIN)
+  await clock.advance(53 * MIN)
   r = (await rows(ui))[0]
-  expect(r.tip).toMatch(/Water (4\d|5\d)% · empty in \d+m/)
+  expect(r.tip).toMatch(/Water (4\d|5\d)% · empty in (\d+m|\dh\d\dm)/)
   expect(glassOf(r)).toBe('▄')
   await ui.unmount()
 })
@@ -520,7 +531,7 @@ test('water: the five icons are all reachable and never wider than 3 cells', asy
   const clock = await boot($, on)
   const ui = await $.ui.mount(BAND(100))
   const seen = new Set<string>()
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 110; i++) {
     seen.add(glassOf((await rows(ui))[0])!)
     await clock.advance(MIN)
   }
@@ -537,7 +548,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
     const clock = await boot($, on)
     const ui = await $.ui.mount({ ...BAND(100), surface })
     const sources: string[] = []
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 110; i++) {
       const icon = iconOf(await ui.drawn())
       expect(icon).toBeTruthy()
       expect(icon.props.source).toMatch(/data:image\/png;base64,/)
@@ -557,7 +568,7 @@ for (const surface of ['desktop', 'vscode'] as const) {
   test(`${surface}: the hover card has the info and a Refill button that refills`, async ($, on) => {
     const clock = await boot($, on)
     const ui = await $.ui.mount({ ...BAND(100), surface })
-    await clock.advance(50 * MIN) // empty
+    await clock.advance(110 * MIN) // empty
     const before = iconOf(await ui.drawn()).props.source
     const card = findAllType(await ui.drawn(), 'Box').find((b: any) => b.props?.display === 'none' && findAllType(b, 'Button').length)
     expect(card).toBeTruthy()
@@ -576,7 +587,7 @@ test('desktop hover card is one compact line: percent, time left, short button; 
   const ui = await $.ui.mount({ ...BAND(100), surface: 'desktop' })
   await clock.advance(5 * MIN)
   const card = findAllType(await ui.drawn(), 'Box').find((b: any) => b.props?.display === 'none' && findAllType(b, 'Button').length)!
-  expect(textAll(card)).toMatch(/^8\d% · empty in 4\dm$/) // e.g. "89% · empty in 40m", nothing else
+  expect(textAll(card)).toMatch(/^9\d% · empty in 1h4\dm$/) // e.g. "95% · empty in 1h40m", nothing else
   expect(findAllType(card, 'Button')[0].props.label).toBe('Refill')
   expect(findAllType(card, 'Text').some((n: any) => n.props?.inverse)).toBe(false)
   await ui.unmount()

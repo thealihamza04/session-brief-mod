@@ -21,7 +21,7 @@ const timer = atom(
   { openedAt: 0, startedAt: 0, lastActive: 0, now: 0 } as ChatTimer,
 )
 // The glass drains linearly over this long, then you are nudged to drink.
-const DRAIN_MS = 45 * 60 * 1000
+const DRAIN_MS = 105 * 60 * 1000
 // While it stays empty and you keep working, remind again this often.
 const NUDGE_EVERY_MS = 15 * 60 * 1000
 
@@ -457,12 +457,13 @@ export const register: Register = on => {
     // The water glass: drains over DRAIN_MS; pressing it refills.
     const level = fill(now, num((await read($, water)).lastDrink))
     const glass: Seg = { t: glassIcon(level), c: glassColor(level), bold: true, press: 'water' }
-    const leftMin = Math.ceil((level * DRAIN_MS) / 60000)
+    // Time left, rounded up to the minute: 40m, 1h45m.
+    const leftText = fmt(Math.ceil((level * DRAIN_MS) / 60000) * 60000)
     const hint = Svg ? 'use Refill when you drink' : 'click the glass to refill'
     const waterTip =
       level <= 0
         ? `Water is empty: time to drink! ${Svg ? 'Press Refill after.' : 'Click the glass to refill.'}`
-        : `Water ${Math.round(level * 100)}% · empty in ${leftMin}m · ${hint}`
+        : `Water ${Math.round(level * 100)}% · empty in ${leftText} · ${hint}`
     // A fixed one-cell spacer: plain spaces collapse next to images, so gaps are real boxes.
     const gap: Seg = { t: ' ', spacer: true }
 
@@ -610,7 +611,7 @@ export const register: Register = on => {
                 ) : (
                   <Text wrap="truncate-end">
                     <Text color={glassColor(level)} bold>{`${Math.round(level * 100)}%`}</Text>
-                    <Text color="subtle">{` · empty in ${leftMin}m`}</Text>
+                    <Text color="subtle">{` · empty in ${leftText}`}</Text>
                   </Text>
                 )}
                 <Button key="water" label={level <= 0 ? 'I drank' : 'Refill'} onPress={refill} />
